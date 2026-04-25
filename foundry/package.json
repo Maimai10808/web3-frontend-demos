@@ -1,0 +1,11 @@
+{
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  },
+  "scripts": {
+    "export:deployment": "tsx tools/export-foundry-deployment.ts",
+    "deploy:local": "bash tools/deploy-and-export.sh"
+  }
+}
