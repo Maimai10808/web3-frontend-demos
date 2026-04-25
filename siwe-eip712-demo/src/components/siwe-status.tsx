@@ -1,20 +1,13 @@
+// src/components/SiweStatus.tsx
+
 "use client";
 
-import { signOut, useSession } from "next-auth/react";
+import { signOut } from "next-auth/react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount, useChainId } from "wagmi";
-
-function shortAddress(address?: string) {
-  if (!address) return "Not connected";
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
+import { useSiweStatusViewModel } from "@/hooks/useSiweStatusViewModel";
 
 export function SiweStatus() {
-  const { address, isConnected } = useAccount();
-  const chainId = useChainId();
-  const { data: session, status } = useSession();
-
-  const isSignedIn = Boolean(session?.user?.name);
+  const { wallet, auth } = useSiweStatusViewModel();
 
   return (
     <div className="mx-auto w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-8 shadow-xl">
@@ -41,28 +34,28 @@ export function SiweStatus() {
             <div className="rounded-xl bg-white p-3">
               <div className="text-slate-500">Connected</div>
               <div className="mt-1 font-medium text-slate-900">
-                {isConnected ? "Yes" : "No"}
+                {wallet.isConnected ? "Yes" : "No"}
               </div>
             </div>
 
             <div className="rounded-xl bg-white p-3">
               <div className="text-slate-500">Address</div>
               <div className="mt-1 break-all font-medium text-slate-900">
-                {address ?? "Not connected"}
+                {wallet.address ?? "Not connected"}
               </div>
             </div>
 
             <div className="rounded-xl bg-white p-3">
               <div className="text-slate-500">Short address</div>
               <div className="mt-1 font-medium text-slate-900">
-                {shortAddress(address)}
+                {wallet.shortAddress}
               </div>
             </div>
 
             <div className="rounded-xl bg-white p-3">
               <div className="text-slate-500">Chain ID</div>
               <div className="mt-1 font-medium text-slate-900">
-                {chainId ?? "N/A"}
+                {wallet.chainId ?? "N/A"}
               </div>
             </div>
           </div>
@@ -76,25 +69,27 @@ export function SiweStatus() {
           <div className="space-y-3 text-sm">
             <div className="rounded-xl bg-white p-3">
               <div className="text-slate-500">Session status</div>
-              <div className="mt-1 font-medium text-slate-900">{status}</div>
+              <div className="mt-1 font-medium text-slate-900">
+                {auth.status}
+              </div>
             </div>
 
             <div className="rounded-xl bg-white p-3">
               <div className="text-slate-500">Authenticated address</div>
               <div className="mt-1 break-all font-medium text-slate-900">
-                {session?.user?.name ?? "Not signed in"}
+                {auth.sessionAddress ?? "Not signed in"}
               </div>
             </div>
 
             <div className="rounded-xl bg-white p-3">
               <div className="text-slate-500">Auth state</div>
               <div className="mt-1 font-medium text-slate-900">
-                {isSignedIn ? "Signed in" : "Signed out"}
+                {auth.isSignedIn ? "Signed in" : "Signed out"}
               </div>
             </div>
           </div>
 
-          {isSignedIn && (
+          {auth.isSignedIn && (
             <div className="mt-5">
               <button
                 onClick={() => signOut()}
