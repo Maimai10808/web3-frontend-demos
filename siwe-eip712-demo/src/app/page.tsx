@@ -24,14 +24,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        <div className="grid items-start gap-8 xl:grid-cols-[0.92fr_1.08fr]">
-          <SiweStatus />
-          <div className="space-y-8">
-            <OrderSigner />
-            <SignatureFlowExplainer />
-          </div>
-        </div>
-
         <section className="rounded-xl border-2 border-[#c9a74e] bg-[#f5ecd7]/88 p-8 shadow-[0_4px_12px_rgba(201,167,78,0.15)]">
           <div className="grid gap-5 text-center md:grid-cols-3">
             {[
@@ -68,6 +60,12 @@ export default function HomePage() {
             ))}
           </div>
         </section>
+
+        <div className="mx-auto flex w-full max-w-2xl flex-col gap-8">
+          <SiweStatus />
+          <OrderSigner />
+          <SignatureFlowExplainer />
+        </div>
       </div>
     </main>
   );
