@@ -1076,7 +1076,7 @@ const canSign =
 
 ### 9.7 nonce store 如何 create nonce 和 consume nonce
 
-位置：[`src/lib/order-nonce-store.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/order-nonce-store.ts)
+位置：[`src/lib/order-nonce-store.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-contracthook/src/lib/order-nonce-store.ts)
 
 #### createOrderNonce(address)
 
