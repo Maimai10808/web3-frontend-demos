@@ -2,13 +2,13 @@ export function SignatureFlowExplainer() {
   const explainerCards = [
     {
       title: "SIWE",
-      body: "SIWE is used for authentication. The wallet signs a login message, the backend verifies it, and a session is established.",
-      flow: "connect wallet → sign SIWE message → verify → session",
+      body: "SIWE is the identity layer. The wallet signs a login message, the backend verifies ownership of the address, and NextAuth establishes a session for subsequent application requests.",
+      flow: "connect wallet → sign SIWE message → backend verify → session",
     },
     {
-      title: "EIP-712",
-      body: "EIP-712 is used for structured business authorization. The wallet signs typed data such as an order, permit, whitelist action, or profile update.",
-      flow: "session → sign typed data → recover signer → verify business action",
+      title: "SignedOrderBook EIP-712",
+      body: "EIP-712 is the authorization layer. The wallet signs a real SignedOrderBook order containing maker, token, recipient, amount, deadline, and nonce so the backend can verify intent first and the contract can verify and execute the same payload onchain.",
+      flow: "session → request nonce → sign typed order → backend verify → approve token → execute order",
     },
   ];
 
@@ -20,7 +20,7 @@ export function SignatureFlowExplainer() {
             Comparative Atlas
           </div>
           <h2 className="mt-4 font-sans text-2xl font-semibold tracking-wide text-[#1a3a5c] md:text-3xl">
-            SIWE vs EIP-712
+            SIWE vs SignedOrderBook EIP-712
           </h2>
         </div>
 
@@ -53,8 +53,11 @@ export function SignatureFlowExplainer() {
             Full Flow
           </h3>
           <div className="mt-4 rounded-lg border-2 border-[#c9a74e] bg-[#f5ecd7]/10 p-4 font-sans text-xs leading-6 tracking-wide text-[#f5ecd7] md:text-sm">
-            connect wallet → SIWE login → session → sign typed data → backend
-            verify
+            connect wallet → verify expected chain → SIWE login → session →
+            request signed-order nonce → sign SignedOrderBook typed data →
+            backend recover signer → compare signer, maker, session, deadline,
+            token, and nonce → approve DemoERC20 → execute SignedOrderBook
+            order onchain
           </div>
         </div>
       </div>

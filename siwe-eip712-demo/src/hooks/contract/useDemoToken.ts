@@ -31,15 +31,41 @@ export function useDemoToken() {
     },
   });
 
-  const { writeContractAsync, isPending } = useWriteContract();
+  const allowanceToOrderBook = useReadContract({
+    ...contracts.demoERC20,
+    functionName: "allowance",
+    args: address ? [address, contracts.signedOrderBook.address] : undefined,
+    query: {
+      enabled: Boolean(address),
+    },
+  });
+
+  const { writeContractAsync: writeTransferAsync, isPending: isTransferPending } =
+    useWriteContract();
+  const { writeContractAsync: writeApproveAsync, isPending: isApprovePending } =
+    useWriteContract();
+
+  function normalizeAmount(value: string | bigint) {
+    if (typeof value === "bigint") {
+      return value;
+    }
+
+    return parseUnits(value, decimals.data ?? 18);
+  }
 
   async function transfer(to: `0x${string}`, amount: string) {
-    const tokenDecimals = decimals.data ?? 18;
-
-    return writeContractAsync({
+    return writeTransferAsync({
       ...contracts.demoERC20,
       functionName: "transfer",
-      args: [to, parseUnits(amount, tokenDecimals)],
+      args: [to, normalizeAmount(amount)],
+    });
+  }
+
+  async function approveSignedOrderBook(amount: string | bigint) {
+    return writeApproveAsync({
+      ...contracts.demoERC20,
+      functionName: "approve",
+      args: [contracts.signedOrderBook.address, normalizeAmount(amount)],
     });
   }
 
@@ -53,8 +79,16 @@ export function useDemoToken() {
       balance.data !== undefined
         ? formatUnits(balance.data, decimals.data ?? 18)
         : "0",
+    rawAllowanceToOrderBook: allowanceToOrderBook.data,
+    allowanceToOrderBook:
+      allowanceToOrderBook.data !== undefined
+        ? formatUnits(allowanceToOrderBook.data, decimals.data ?? 18)
+        : "0",
     transfer,
-    isTransferPending: isPending,
+    approveSignedOrderBook,
+    isTransferPending,
+    isApprovePending,
     refetchBalance: balance.refetch,
+    refetchAllowanceToOrderBook: allowanceToOrderBook.refetch,
   };
 }

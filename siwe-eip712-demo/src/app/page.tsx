@@ -13,13 +13,13 @@ export default function HomePage() {
               Wallet Identity Pavilion
             </div>
             <h1 className="mt-6 font-sans text-5xl font-semibold tracking-wide text-[#f5ecd7] md:text-7xl lg:text-8xl">
-              A Dual-Signature Interface for SIWE and EIP-712
+              SIWE Identity and SignedOrderBook Authorization
             </h1>
             <p className="mt-6 max-w-3xl font-sans text-sm leading-7 text-[#f5ecd7]/82 md:text-base">
-              Reframed in deep blue, gilded gold, and ivory, this demo keeps the
-              existing logic intact while presenting wallet connection and SIWE
-              session verification above structured EIP-712 signing and backend
-              verification.
+              This demo now focuses on the real training path: connect a wallet,
+              establish a SIWE session, sign a genuine SignedOrderBook typed
+              order, and let the backend verify signer, session, token,
+              deadline, and nonce before any optional onchain execution.
             </p>
           </div>
         </section>
@@ -30,17 +30,17 @@ export default function HomePage() {
               [
                 "Step 01",
                 "Connect",
-                "Connect a wallet and read the active address and chain ID.",
+                "Connect a wallet, read the active address, and confirm the expected local deployment chain.",
               ],
               [
                 "Step 02",
-                "Authenticate",
-                "Create a trusted session by completing Sign-In with Ethereum.",
+                "Authenticate with SIWE",
+                "Create a web session that proves the connected wallet address is the current authenticated user.",
               ],
               [
                 "Step 03",
-                "Authorize",
-                "Sign EIP-712 typed data and send it to the backend for verification.",
+                "Verify and Execute",
+                "Build a real SignedOrderBook order, sign it with EIP-712 typed data, verify it on the backend, approve DemoERC20, and execute it onchain.",
               ],
             ].map(([step, title, description]) => (
               <div

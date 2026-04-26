@@ -1,1143 +1,1415 @@
-# SIWE + EIP-712 Demo
+# SIWE + EIP-712 + SignedOrderBook Demo
 
-<p align="center">
-  <img src="./1.png" alt="Home" width="50%" />
-</p>
+## 项目定位
 
-## 1. 项目目标
+这是一个**最小但完整**的 Web3 身份认证 + 业务签名 Demo。它不是单纯的“连接钱包”示例，而是把下面三件事清楚地拆开并串起来：
 
-这是一个最小但完整的 Web3 身份认证 + 业务签名 demo，演示两条经常被混在一起、但实际应该分离处理的链路：
+1. `Connect Wallet`
+   让前端知道当前连接的是哪个钱包地址、当前链是什么。
+2. `SIWE Login`
+   用钱包签名建立 Web Session，证明“这个浏览器里的当前用户，确实控制这个钱包地址”。
+3. `EIP-712 Business Signature + Onchain Execute`
+   在登录之后，对一个具体业务对象 `SignedOrderBook.Order` 做结构化签名，后端验签，再由合约做最终链上验证和执行。
 
-1. 如何把“钱包地址控制权”转换成 Web 登录态。
-2. 登录之后，如何对某一个具体业务动作发起 EIP-712 结构化签名，并在后端完成验签与防重放校验。
+这个 Demo 解决的核心问题是：
 
-当前项目并不是单纯的“连接钱包 demo”。它把以下两件事情完整串起来了：
+- 连接钱包不等于登录。
+- 登录成功也不等于用户已经授权某个具体业务动作。
+- 对业务签名，后端和合约都要重新验证，而不是只信前端。
 
-- `SIWE (Sign-In with Ethereum)`：用于登录认证，证明“当前用户确实控制这个钱包地址”，成功后建立 NextAuth session。
-- `EIP-712 typed data signing`：用于业务授权，证明“当前已登录用户同意这个具体业务动作”，例如签订单、permit、profile update、白名单操作等。
+当前项目围绕三步主流程组织：
 
-本项目的核心目标是展示一个清晰的边界：
+### Step 01
 
-- 钱包连接态不等于登录态。
-- 有了登录态也不等于业务已授权。
-- 后端必须重新做 signer recovery、session 对比、业务字段对比、deadline 校验和 nonce 防重放校验。
+**Connect**
 
-## 2. 技术栈
+Connect a wallet, read the active address, and confirm the expected local deployment chain.
 
-以下内容基于 `package.json` 和当前代码实现整理。
+### Step 02
 
-### Next.js 16 + App Router
+**Authenticate with SIWE**
 
-- 依赖：`next@16.2.4`
-- 作用：承载前端页面、API routes 和整体应用结构。
-- 实际使用位置：
-  - 页面入口：[`src/app/page.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/page.tsx)
-  - 根布局：[`src/app/layout.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/layout.tsx)
-  - API routes：
-    - [`src/app/api/auth/[...nextauth]/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/auth/[...nextauth]/route.ts)
-    - [`src/app/api/orders/nonce/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/nonce/route.ts)
-    - [`src/app/api/orders/verify/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/verify/route.ts)
+Create a web session that proves the connected wallet address is the current authenticated user.
 
-### TypeScript
+### Step 03
 
-- 作用：为 session、order、typed data、API 返回结构等提供静态类型约束。
-- 实际体现：
-  - `MockOrderInput`
-  - `MockOrderTypedData`
-  - `VerifyResult`
-  - `OrderFormInput`
+**Verify and Execute**
 
-### wagmi
+Build a real `SignedOrderBook` order, sign it with EIP-712 typed data, verify it on the backend, approve `DemoERC20`, and execute it onchain.
 
-- 依赖：`wagmi`
-- 作用：管理钱包连接状态、当前链、当前地址，以及发起 typed data 签名。
-- 实际使用：
-  - [`src/lib/wallet.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/wallet.ts) 中创建 wagmi 配置
-  - `useAccount` / `useChainId` / `useSignTypedData`
-  - [`src/hooks/useSiweStatusViewModel.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useSiweStatusViewModel.ts)
-  - [`src/hooks/useOrderSigner.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useOrderSigner.ts)
+---
 
-### RainbowKit
+## 这个 Demo 在解决什么
 
-- 依赖：`@rainbow-me/rainbowkit`
-- 作用：提供连接钱包 UI 与钱包连接能力。
-- 实际使用：
-  - [`src/components/providers.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/providers.tsx) 中的 `RainbowKitProvider`
-  - [`src/components/siwe-status.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/siwe-status.tsx) 中的 `ConnectButton`
+用一句话概括：
 
-### RainbowKit SIWE NextAuth
+> `SIWE` 负责“你是谁”，`EIP-712` 负责“你授权了什么业务动作”，`SignedOrderBook` 负责“这份授权能不能被链上承认并执行”。
 
-- 依赖：`@rainbow-me/rainbowkit-siwe-next-auth`
-- 作用：把 RainbowKit 的钱包连接与 NextAuth 的 SIWE 登录流程串起来。
-- 实际使用：
-  - [`src/components/providers.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/providers.tsx) 中的 `RainbowKitSiweNextAuthProvider`
+项目中的三个链上合约分别承担不同职责：
 
-### NextAuth
+- `DemoERC20`
+  测试代币，用来提供真实余额、`approve`、`transferFrom` 的执行对象。
+- `TokenFaucet`
+  水龙头，给用户发 `DemoERC20`，让后续业务签名真的能产生链上效果。
+- `SignedOrderBook`
+  业务签名核心合约。它接收一个 `Order + signature`，恢复 signer、检查 `deadline` / `nonce`，再执行 `transferFrom`。
 
-- 依赖：`next-auth`
-- 作用：建立和维护 Web 登录态。
-- 当前实现方式：
-  - 使用 `CredentialsProvider`
-  - `authorize` 中验证 SIWE message + signature
-  - session 使用 `jwt` strategy
-  - 登录地址被写入 `token.sub` 和 `session.user.name`
-- 实际代码：
-  - 配置：[`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts)
-  - Route：[`src/app/api/auth/[...nextauth]/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/auth/[...nextauth]/route.ts)
+所以这个项目不是“展示钱包连接动画”的 UI 项目，而是一个很适合教学和复习的边界示例：
+
+- 钱包连接态
+- Web 登录态
+- 业务签名
+- 链上执行
+
+这四层在这个 Demo 里是分开的。
+
+---
+
+## 核心概念解释
+
+这一节面向新手，但保持工程准确性。
+
+### Wallet Connection
+
+Wallet Connection 指的是前端通过钱包插件或钱包 App 获得：
+
+- 当前地址
+- 当前链 ID
+- 钱包是否已连接
+
+这一步只能证明：
+
+- 浏览器现在能读到这个地址
+
+它**不能**证明：
+
+- 后端已经把这个地址当成登录用户
+- 用户已经同意某个具体业务动作
+
+所以：
+
+> Connect Wallet ≠ Login
 
 ### SIWE
 
-- 依赖：`siwe`
-- 作用：验证登录消息，证明用户控制某个钱包地址。
-- 实际使用：
-  - [`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts)
-  - `new SiweMessage(credentials.message)`
-  - `siwe.verify(...)`
+`SIWE` 是 `Sign-In with Ethereum`。
 
-### viem
+它的作用不是签业务单子，而是做登录认证。
 
-- 依赖：`viem`
-- 作用：做地址校验、地址比较、EIP-712 签名恢复。
-- 实际使用：
-  - `isAddress`
-  - `isAddressEqual`
-  - `recoverTypedDataAddress`
-- 代码位置：
-  - [`src/app/api/orders/nonce/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/nonce/route.ts)
-  - [`src/app/api/orders/verify/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/verify/route.ts)
+用户会签一条登录消息，后端验证成功后建立 session。这样后端就知道：
+
+- 当前这个浏览器会话，对应的钱包地址是谁
+
+你可以把它理解成：
+
+- Web2 里用户名密码登录，换成了“钱包签名登录”
+
+### Session
+
+Session 是后端保存的登录态。
+
+在这个项目里，session 由 `NextAuth` 维护，地址最终放在：
+
+- `session.user.name`
+
+这意味着后端 API 不需要每次都重新做“登录签名挑战”，它可以直接读取当前 session 里的地址。
 
 ### EIP-712 Typed Data
 
-- 作用：定义结构化业务签名的数据域、类型、消息体。
-- 当前 demo 的签名对象是 `Order`：
-  - `maker`
-  - `token`
-  - `amount`
-  - `price`
-  - `deadline`
-  - `nonce`
-- 代码位置：
-  - [`src/lib/eip712.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712.ts)
+`EIP-712` 是一种**结构化签名**标准。
 
-### Tailwind CSS 4
+它不是签一段随便的字符串，而是签：
 
-- 依赖：`tailwindcss`, `@tailwindcss/postcss`
-- 作用：页面与组件样式实现。
-- 实际文件：
-  - [`src/app/globals.css`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/globals.css)
-  - 组件中大量 `className`
+- `domain`
+- `types`
+- `message`
 
-### Zod
+这能让签名明确绑定到：
 
-- 依赖：`zod`
-- 作用：验证 order 表单输入和完整 order payload。
-- 实际使用：
-  - [`src/lib/eip712.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712.ts)
-  - `orderFormSchema`
-  - `orderInputSchema`
+- 哪个业务结构
+- 哪个链
+- 哪个 verifying contract
 
-### react-hook-form
+在本项目中，用户签的是 `SignedOrderBook.Order`，字段包括：
 
-- 依赖：`react-hook-form`
-- 作用：管理业务签名表单。
-- 实际使用：
-  - [`src/components/order-signer.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/order-signer.tsx)
+- `maker`
+- `token`
+- `recipient`
+- `amount`
+- `deadline`
+- `nonce`
 
-### @hookform/resolvers
+### Off-chain Signature
 
-- 依赖：`@hookform/resolvers`
-- 作用：把 Zod schema 接到 `react-hook-form`。
-- 实际使用：
-  - [`src/components/order-signer.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/order-signer.tsx)
+Off-chain Signature 指的是：
 
-### @tanstack/react-query
+- 钱包签了消息
+- 但没有发链上交易
+- 不消耗 gas
 
-- 依赖：`@tanstack/react-query`
-- 作用：作为 RainbowKit / wagmi 常见配套基础设施提供 `QueryClientProvider`。
-- 实际使用：
-  - [`src/components/providers.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/providers.tsx)
+本项目里有两种 off-chain signature：
 
-## 3. 核心链路
+1. `SIWE` 登录签名
+2. `EIP-712` 业务签名
 
-这一章是整个 README 的重点，按当前真实代码说明。
+这两者都不是链上交易。
 
-### 总览
+### On-chain Verification
 
-完整链路如下：
+On-chain Verification 指的是合约自己验证签名是否有效。
+
+在本项目中，`SignedOrderBook.executeOrder(order, signature)` 会在合约内部：
+
+- 重新算 `hashOrder`
+- `recoverSigner`
+- 检查 `deadline`
+- 检查 `usedNonces`
+- 检查 `signer == maker`
+
+全部通过后才执行真实代币转移。
+
+### Nonce
+
+`Nonce` 是一次性随机值，用来防止重放攻击。
+
+如果没有 nonce，那么同一份签名理论上可以被重复提交。
+
+这个项目中有两层 nonce 语义：
+
+- 后端签名前会给前端发一个业务 nonce
+- 合约里有 `usedNonces`，确保链上同一 nonce 不能重复执行
+
+### Deadline
+
+`deadline` 是签名的过期时间。
+
+它告诉系统：
+
+- 这份授权只在某个时间点之前有效
+
+如果过期了：
+
+- 后端应该拒绝
+- 合约也应该拒绝
+
+### ERC20 approve
+
+`approve` 的意思是：
+
+- 代币持有者授权某个合约，未来可以代表自己转出一定数量的 token
+
+在这个项目里，用户需要：
+
+- 把 `DemoERC20` 授权给 `SignedOrderBook`
+
+否则 `SignedOrderBook` 没法执行 `transferFrom`。
+
+### transferFrom
+
+`transferFrom` 是 ERC20 的一种转账方式：
+
+- 不是持币用户自己直接转
+- 而是被授权的第三方合约代扣
+
+本项目链上执行的核心动作就是：
+
+- `SignedOrderBook` 调用 `DemoERC20.transferFrom(order.maker, order.recipient, order.amount)`
+
+### Chain ID / verifyingContract / domain separator
+
+EIP-712 签名不是只签业务字段，还会绑定 `domain`。
+
+本项目的 domain 关键包含：
+
+- `name: "SignedOrderBook"`
+- `version: "1"`
+- `chainId`
+- `verifyingContract`
+
+这意味着：
+
+- 同一个订单签名，不能随便拿去别的链复用
+- 也不能随便拿去别的合约复用
+
+为什么签名必须绑定 `chainId` 和 `verifyingContract`？
+
+- 防止跨链重放
+- 防止跨合约重放
+- 让签名明确属于“这个链上的这个合约”
+
+### 为什么 SIWE 和 EIP-712 是两种不同签名
+
+`SIWE` 解决的是：
+
+> 你是谁
+
+`EIP-712` 解决的是：
+
+> 你授权了哪个具体业务动作
+
+它们的区别不只是“格式不同”，而是职责完全不同：
+
+- `SIWE` 成功后产生 session
+- `EIP-712` 成功后产生可验证的业务授权
+
+两者都不是链上交易，也都不直接改链上状态。
+
+---
+
+## 完整业务链路
+
+下面是当前项目的真实主链路。
 
 ```text
 connect wallet
-→ SIWE login
-→ NextAuth session
-→ request order nonce
-→ build EIP-712 typed data
-→ wallet sign typed data
-→ frontend submit order + signature
-→ backend recover signer
-→ compare recovered signer with session address
-→ compare order.maker with session address
-→ check deadline
-→ consume nonce
-→ return verified result
+→ check chain
+→ request SIWE nonce
+→ sign SIWE message
+→ backend verify SIWE
+→ create session
+→ build SignedOrderBook order
+→ request business nonce
+→ sign EIP-712 typed data
+→ backend verify typed data
+→ approve DemoERC20
+→ executeOrder on SignedOrderBook
+→ contract recover signer
+→ contract check nonce / deadline
+→ contract transferFrom
+→ emit OrderExecuted
 ```
 
-### 1. Connect wallet
+为了方便讲解，下面按“前端、后端、合约”拆开。
 
-- 负责组件：[`src/components/siwe-status.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/siwe-status.tsx)
-- 关键 UI：`<ConnectButton />`
-- 状态来源：
-  - [`src/hooks/useSiweStatusViewModel.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useSiweStatusViewModel.ts)
-  - `useAccount()`
-  - `useChainId()`
-- Provider 装配：
-  - [`src/components/providers.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/providers.tsx)
-  - `WagmiProvider`
-  - `RainbowKitProvider`
+### Step 01: Connect
 
-为什么需要这一步：
+前端入口：
 
-- 没有钱包连接，就没有可用地址，也无法进行 SIWE 登录和 EIP-712 业务签名。
+- 页面：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/page.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/page.tsx)
+- 组件：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/siwe-status.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/siwe-status.tsx)
+- Provider：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/providers.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/providers.tsx)
+- 钱包配置：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/wallet.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/wallet.ts)
 
-### 2. SIWE login
+发生了什么：
 
-- 连接逻辑提供者：`RainbowKitSiweNextAuthProvider`
-  - 位置：[`src/components/providers.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/providers.tsx)
-- 后端认证入口：
-  - [`src/app/api/auth/[...nextauth]/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/auth/[...nextauth]/route.ts)
-- 真正的认证配置：
-  - [`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts)
+1. 用户点击 `ConnectButton`
+2. wagmi / RainbowKit 读取当前钱包地址
+3. 前端读取当前 `chainId`
+4. 前端将当前链与 `deploymentMeta.chainId` 对比
 
-关键过程：
+预期链来源：
 
-1. 钱包对 SIWE message 签名。
-2. NextAuth `CredentialsProvider.authorize` 收到 `message` 和 `signature`。
-3. `new SiweMessage(credentials.message)` 解析消息。
-4. 通过 `getCsrfToken(...)` 获取 NextAuth CSRF token。
-5. `siwe.verify(...)` 验证：
-   - signature
-   - domain（来自 `NEXTAUTH_URL`）
-   - nonce（这里使用 NextAuth csrfToken）
-6. 验证通过后，返回 `{ id: siwe.address, name: siwe.address }`。
+- [`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/contracts.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/contracts.ts)
+- [`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/generated/deployment.meta.json`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/generated/deployment.meta.json)
 
-为什么需要这一步：
+当前项目的本地链配置是：
 
-- 这一步解决的是“用户是谁”。
-- 不是授权业务，而是建立一个可持续使用的 Web session。
+- `chainId = 31337`
+- RPC = `http://127.0.0.1:8545`
 
-### 3. NextAuth session
+### Step 02: Authenticate with SIWE
 
-- 配置位置：[`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts)
-- Session provider：
-  - [`src/components/providers.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/providers.tsx)
+相关文件：
 
-关键实现：
+- NextAuth 配置：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts)
+- NextAuth route：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/auth/[...nextauth]/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/auth/[...nextauth]/route.ts)
+- SIWE provider 装配：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/providers.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/providers.tsx)
+- 前端状态整理：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useSiweStatusViewModel.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useSiweStatusViewModel.ts)
+- Session guard：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useSiweSessionGuard.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useSiweSessionGuard.ts)
 
-- `session.strategy = "jwt"`
-- `jwt` callback：把 `user.name` 写入 `token.sub`
-- `session` callback：把 `token.sub` 写入 `session.user.name`
+发生了什么：
 
-当前项目中，钱包地址最终放在：
+1. 用户在连接钱包后触发 SIWE 登录。
+2. 钱包签一条 SIWE 登录消息。
+3. NextAuth 的 `CredentialsProvider.authorize()` 收到：
+   - `message`
+   - `signature`
+4. 后端用 `SiweMessage.verify()` 校验签名。
+5. 验证成功后，NextAuth 创建 JWT session。
+6. 钱包地址被写入 `session.user.name`。
 
-```ts
-session.user.name;
-```
+这个项目里，SIWE nonce 不是单独的业务 API，而是通过 NextAuth 的 `csrfToken` 参与校验。
 
-为什么需要这一步：
+### Step 03: Verify and Execute
 
-- 后续 `/api/orders/nonce` 和 `/api/orders/verify` 都要从 session 中取出当前认证地址。
+这一阶段是当前项目的重点。
 
-### 4. Request order nonce
+#### 3.1 构造业务订单
 
-- 前端发起位置：
-  - [`src/hooks/useOrderSigner.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useOrderSigner.ts)
-  - 函数：`requestOrderNonce()`
-- 后端接口：
-  - [`src/app/api/orders/nonce/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/nonce/route.ts)
-- nonce 存储：
-  - [`src/lib/order-nonce-store.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/order-nonce-store.ts)
+相关文件：
 
-关键过程：
+- 页面组件：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/order-signer.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/order-signer.tsx)
+- 前端业务签名 hook：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/order/useOrderSigner.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/order/useOrderSigner.ts)
+- EIP-712 order schema：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/order.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/order.ts)
+- EIP-712 domain：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/domain.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/domain.ts)
 
-1. 前端 `POST /api/orders/nonce`
-2. 后端 `getServerSession(authOptions)`
-3. 从 `session.user.name` 取出 `sessionAddress`
-4. 用 `isAddress(sessionAddress)` 校验地址格式
-5. 调用 `createOrderNonce(sessionAddress)`
-6. 返回：
-   - `nonce`
-   - `expiresAt`
+前端表单输入的是：
 
-为什么需要这一步：
+- `recipient`
+- `amount`
+- `deadlineSeconds`
 
-- 业务签名必须有防重放字段。
-- 当前项目明确规定：nonce 必须由后端签名前发放，前端不能自己生成。
+系统补齐的是：
 
-### 5. Build EIP-712 typed data
+- `maker`：当前钱包地址
+- `token`：当前 DemoERC20 地址
+- `deadline`：当前时间 + 用户输入秒数
+- `nonce`：后端签名前发的 bytes32 nonce
 
-- 位置：
-  - [`src/hooks/useOrderSigner.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useOrderSigner.ts)
-  - [`src/lib/eip712.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712.ts)
+最终构造出真实的 `SignedOrderBook.Order`。
 
-相关函数：
+#### 3.2 请求业务 nonce
 
-- `buildOrder(values, nonce)`
-- `orderInputSchema.safeParse(order)`
-- `toOrderTypedData(parsedOrder.data)`
-- `getOrderDomain(chainId)`
+相关文件：
 
-当前 order 结构：
+- API：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/eip712/order-nonce/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/eip712/order-nonce/route.ts)
+- Store：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/nonce.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/nonce.ts)
 
-```ts
-{
-  (maker, token, amount, price, deadline, nonce);
-}
-```
+发生了什么：
 
-当前 domain：
+1. 前端调用 `POST /api/eip712/order-nonce`
+2. 后端从当前 session 取出地址
+3. 后端生成一个 `bytes32` nonce
+4. nonce 记录到内存 `Map`
+5. nonce 带过期时间返回给前端
 
-```ts
-{
-  name: "SIWE EIP712 Demo",
-  version: "1",
-  chainId,
-  verifyingContract: "0x0000000000000000000000000000000000000000"
-}
-```
+注意：
 
-为什么需要这一步：
+- 当前 nonce store 是内存 Map
+- 这只适合本地 demo
+- 不适合 serverless、多实例、服务重启后的生产环境
 
-- EIP-712 签名不是随便签一段字符串，而是对有结构的业务数据签名。
-- domain 和 types 让后端可以在同样规则下恢复 signer。
+#### 3.3 签 EIP-712 Typed Data
 
-### 6. Wallet sign typed data
+相关文件：
 
-- 位置：[`src/hooks/useOrderSigner.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useOrderSigner.ts)
-- 关键函数：`signTypedDataAsync`
+- 前端 hook：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/order/useOrderSigner.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/order/useOrderSigner.ts)
+- 结构定义：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/order.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/order.ts)
+- domain 定义：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/domain.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/domain.ts)
 
-调用方式：
+前端调用 `signTypedDataAsync()` 时会带上：
 
-```ts
-await signTypedDataAsync({
-  domain: getOrderDomain(chainId),
-  types: orderTypes,
-  primaryType: "Order",
-  message: typedOrder,
-});
-```
+- `domain`
+- `types`
+- `primaryType: "Order"`
+- `message`
 
-为什么需要这一步：
+签完后得到：
 
-- 这一签名表达的是“当前钱包控制者同意这个具体 order 内容”。
-- 这不是登录签名，而是业务授权签名。
+- `signature`
 
-### 7. Frontend submit order + signature
+此时还没有发链上交易，也没有消耗 gas。
 
-- 位置：[`src/hooks/useOrderSigner.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useOrderSigner.ts)
-- 关键函数：`signAndVerify(values)`
+#### 3.4 后端验签
 
-签名成功后，前端提交：
+相关文件：
 
-```json
-{
-  "chainId": 1,
-  "order": { "...": "..." },
-  "signature": "0x..."
-}
-```
+- API：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/eip712/verify-order/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/eip712/verify-order/route.ts)
 
-提交地址：
+后端做了哪些最少校验：
 
-```text
-POST /api/orders/verify
-```
+1. 当前 session 是否存在
+2. `chainId` 是否等于预期 `31337`
+3. `token` 是否在允许列表内
+4. `recoverTypedDataAddress()` 恢复出的 signer 是否等于 `order.maker`
+5. `session.user.name` 是否等于 `order.maker`
+6. `deadline` 是否已过期
+7. nonce 是否存在、是否属于当前地址、是否过期、是否已使用
 
-为什么需要这一步：
+这一步的意义是：
 
-- 钱包签完并不代表业务完成，后端必须独立验签。
+- 后端不盲信前端
+- 后端自己重新计算 signer
+- 并且把“登录身份”和“业务签名身份”绑在一起
 
-### 8. Backend recover signer
+#### 3.5 Approve DemoERC20
 
-- 位置：[`src/app/api/orders/verify/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/verify/route.ts)
+相关文件：
 
-关键函数：
+- Hook：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/contract/useDemoToken.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/contract/useDemoToken.ts)
+- UI：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/order-signer.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/order-signer.tsx)
 
-- `recoverTypedDataAddress(...)`
+前端会：
 
-实际逻辑：
+1. 读取 `allowance(owner, signedOrderBook)`
+2. 判断额度是否足够
+3. 如果不足，让用户点击 `Approve Token`
+4. 调用 `DemoERC20.approve(SignedOrderBook, amount)`
 
-1. 校验 session 是否存在
-2. 校验 `body.order`
-3. 校验 `body.signature`
-4. 校验 `body.chainId`
-5. 用 `getOrderDomain(body.chainId)` + `orderTypes` + `typedOrder` + `signature`
-6. 恢复签名地址 `recoveredAddress`
+为什么必须先 approve？
 
-为什么需要这一步：
+因为链上执行时，`SignedOrderBook` 不是 token owner，它只能通过 `transferFrom` 代扣。没有 allowance，合约执行会失败。
 
-- 后端不能信任前端传来的“这是我签的”。
-- 必须自己恢复 signer，才能知道签名到底对应哪个钱包地址。
+#### 3.6 链上 executeOrder
 
-### 9. Compare recovered signer with session address
+相关文件：
 
-- 位置：[`src/app/api/orders/verify/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/verify/route.ts)
+- Hook：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/contract/useSignedOrderBook.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/contract/useSignedOrderBook.ts)
+- 合约：[`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/src/siwe-eip712-demo/SignedOrderBook.sol`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/src/siwe-eip712-demo/SignedOrderBook.sol)
 
-关键逻辑：
+发生了什么：
 
-```ts
-const signerMatchesSession = isAddressEqual(recoveredAddress, sessionAddress);
-```
+1. 前端调用 `executeOrder(order, signature)`
+2. 合约重新 `recoverSigner`
+3. 合约检查：
+   - `deadline`
+   - `usedNonces`
+   - `maker`
+   - `token`
+   - `recipient`
+   - `amount`
+4. 合约把 nonce 标记成已使用
+5. 合约执行 `IERC20(order.token).transferFrom(order.maker, order.recipient, order.amount)`
+6. 成功后发出 `OrderExecuted`
 
-为什么需要这一步：
+这一步才是真正的链上状态变化。
 
-- 防止“已登录 A 地址，但拿 B 地址的签名来提交”。
-- 业务签名人必须和当前登录 session 对应的地址一致。
+---
 
-### 10. Compare order.maker with session address
+## 模块关系
 
-- 同样位于 `/api/orders/verify`
+这一节按目录整理“谁负责什么，数据怎么流”。
 
-关键逻辑：
+## 页面与 UI
 
-```ts
-const makerMatchesSession = isAddressEqual(orderMaker, sessionAddress);
-```
+### [`src/app/page.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/page.tsx)
 
-为什么需要这一步：
+项目主页面。当前首页就是完整教学页，负责把三步主流程组织在一起：
 
-- 防止签名地址虽然正确，但 order 里声称的业务主体不是当前 session 地址。
-- 这一步确保：
-  - 签名者是 session 地址
-  - order 声明的 maker 也是 session 地址
+- Step 01 Connect
+- Step 02 Authenticate with SIWE
+- Step 03 Verify and Execute
 
-### 11. Check deadline
+它组合了：
 
-- 位置：[`src/app/api/orders/verify/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/verify/route.ts)
+- `SiweStatus`
+- `OrderSigner`
+- `SignatureFlowExplainer`
 
-关键逻辑：
+### [`src/app/order/page.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/order/page.tsx)
 
-```ts
-if (Number(orderInput.deadline) < now) {
-  ...
-}
-```
+独立的 order 页面，但目前也是复用主流程组件：
 
-为什么需要这一步：
+- `SiweStatus`
+- `OrderSigner`
 
-- 防止旧授权长期有效。
-- 当前前端默认把 deadline 设置为“当前时间 + 10 分钟”。
+可以理解成主页教学流的单独入口。
 
-### 12. Consume nonce
+### [`src/app/test/page.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/test/page.tsx)
 
-- 后端校验位置：
-  - [`src/app/api/orders/verify/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/verify/route.ts)
-- nonce store：
-  - [`src/lib/order-nonce-store.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/order-nonce-store.ts)
+本地链测试面板，偏“合约状态与网络状态”。
 
-关键逻辑：
+它当前主要负责：
 
-```ts
-const nonceResult = consumeOrderNonce({
-  address: sessionAddress,
-  nonce: orderInput.nonce,
-});
-```
+- 显示当前钱包
+- 显示当前链 / 预期链
+- Wrong Network 提示
+- 读取 DemoERC20
+- 领取 Faucet
 
-为什么需要这一步：
+它**没有**承载完整的签名执行教学流；完整链路目前在首页。
 
-- 即使签名合法，也不能允许同一个授权被无限重放。
+## API
 
-### 13. Return verified result
+### [`src/app/api/auth/[...nextauth]/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/auth/[...nextauth]/route.ts)
 
-- 位置：[`src/app/api/orders/verify/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/verify/route.ts)
+NextAuth 入口，把请求交给 `authOptions`。
 
-成功时返回：
+### [`src/app/api/eip712/order-nonce/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/eip712/order-nonce/route.ts)
 
-```json
-{
-  "ok": true,
-  "verified": true,
-  "sessionAddress": "...",
-  "recoveredAddress": "...",
-  "order": { "...": "..." }
-}
-```
+新的真实业务 nonce API，服务 `SignedOrderBook.Order`。
 
-UI 展示位置：
+### [`src/app/api/eip712/verify-order/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/eip712/verify-order/route.ts)
 
-- [`src/components/order-signer.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/order-signer.tsx)
+新的真实后端验签 API，专门验证 `SignedOrderBook.Order`。
 
-## 4. 文件结构
+### [`src/app/api/orders/nonce/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/nonce/route.ts)
 
-以下是当前项目中与核心链路相关的关键文件。
+### [`src/app/api/orders/verify/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/verify/route.ts)
 
-### App 入口与布局
+这两条是**旧 mock order** 路线遗留 API。
 
-- [`src/app/layout.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/layout.tsx)
-  - 根布局。
-  - 引入全局样式。
-  - 注入 `Providers`。
+当前首页主流程已经不再使用它们，但它们还保留在仓库里，便于对比旧版 mock 方案与新版真实 `SignedOrderBook` 方案。
 
-- [`src/app/page.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/page.tsx)
-  - 当前唯一页面入口。
-  - 同时渲染：
-    - `SiweStatus`
-    - `OrderSigner`
-    - `SignatureFlowExplainer`
-  - 当前项目没有独立的 `/sign` 页面；签名 UI 就在首页。
+## hooks
 
-- [`src/app/globals.css`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/globals.css)
-  - 全局样式和视觉主题。
-
-### 钱包配置
-
-- [`src/lib/wallet.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/wallet.ts)
-  - 使用 `getDefaultConfig(...)` 创建 RainbowKit / wagmi 配置。
-  - 配置了：
-    - `appName`
-    - `projectId`
-    - `chains: [mainnet, sepolia]`
-    - `ssr: true`
-
-### NextAuth / SIWE 配置
-
-- [`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts)
-  - 整个登录认证的核心配置文件。
-  - 负责：
-    - `CredentialsProvider`
-    - SIWE message 验证
-    - jwt callback
-    - session callback
-    - secret 配置
-
-- [`src/app/api/auth/[...nextauth]/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/auth/[...nextauth]/route.ts)
-  - 暴露 NextAuth 的 GET / POST handler。
-
-### Provider 入口
-
-- [`src/components/providers.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/providers.tsx)
-  - 应用级 provider 装配点。
-  - 包含：
-    - `WagmiProvider`
-    - `QueryClientProvider`
-    - `SessionProvider`
-    - `RainbowKitSiweNextAuthProvider`
-    - `RainbowKitProvider`
-
-### 登录状态 UI
-
-- [`src/components/siwe-status.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/siwe-status.tsx)
-  - 显示钱包连接状态。
-  - 显示 session 状态。
-  - 提供 `ConnectButton`。
-  - 已登录时允许 `signOut()`。
-
-### SIWE session guard hook
-
-- [`src/hooks/useSiweSessionGuard.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useSiweSessionGuard.ts)
-  - 当前 session 存在时，如果：
-    - 钱包断开
-    - 当前连接地址和 sessionAddress 不一致
-    - 链发生变化
-  - 会自动调用 `signOut()`
+### 认证相关
 
 - [`src/hooks/useSiweStatusViewModel.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useSiweStatusViewModel.ts)
-  - 包装钱包状态和 session 状态。
-  - 在内部调用 `useSiweSessionGuard(...)`。
+  统一整理连接态、登录态、地址展示。
+- [`src/hooks/useSiweSessionGuard.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useSiweSessionGuard.ts)
+  在账号切换、链切换、断开连接时自动 `signOut()`，避免 session 和钱包状态错位。
 
-### EIP-712 domain / types / schema
+### 合约相关
 
-- [`src/lib/eip712.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712.ts)
-  - 负责：
-    - 地址 schema
-    - bytes32 schema
-    - `orderFormSchema`
-    - `orderInputSchema`
-    - `orderTypes`
-    - `getOrderDomain(chainId)`
-    - `toOrderTypedData(order)`
+- [`src/hooks/contract/useDemoToken.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/contract/useDemoToken.ts)
+  读取 `name` / `symbol` / `decimals` / `balance` / `allowance`，并提供 `approveSignedOrderBook()`。
+- [`src/hooks/contract/useTokenFaucet.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/contract/useTokenFaucet.ts)
+  读取 faucet 状态并执行 `claim()`。
+- [`src/hooks/contract/useSignedOrderBook.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/contract/useSignedOrderBook.ts)
+  负责链上签名单领域：读取 `usedNonces`、执行 `executeOrder()`、等待 receipt。
+- [`src/hooks/contract/useContracts.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/contract/useContracts.ts)
+  聚合多个 contract hook，供 `/test` 页面使用。
 
-### 业务签名 hook
+### 业务签名相关
+
+- [`src/hooks/order/useOrderSigner.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/order/useOrderSigner.ts)
+  当前首页真实签名主流程入口。
+  它负责：
+  - 请求业务 nonce
+  - 构造 order
+  - 发起 typed data 签名
+  - 调后端 verify API
+  - 返回前端需要展示的结果
+
+### 旧 mock route 遗留 hook
 
 - [`src/hooks/useOrderSigner.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useOrderSigner.ts)
-  - 负责整个业务签名链路：
-    - 读取 wallet/session 状态
-    - 计算 `canSign`
-    - 请求 order nonce
-    - 构造 order
-    - 校验 order
-    - 发起 typed data 签名
-    - 提交后端验签
-    - 保存 `signature` / `result` / `errorMessage`
 
-### Order signer UI
+这是旧版 mock order hook。当前首页真实流程用的是 `src/hooks/order/useOrderSigner.ts`，不是这个文件。
 
-- [`src/components/order-signer.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/order-signer.tsx)
-  - 表单 UI。
-  - 显示 session snapshot。
-  - 调用 `useOrderSigner()`
-  - 展示：
-    - 签名结果
-    - 后端验证结果
-    - 错误提示
+## lib
 
-### `/api/orders/nonce`
+### [`src/lib/wallet.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/wallet.ts)
 
-- [`src/app/api/orders/nonce/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/nonce/route.ts)
-  - 只允许有合法 session 的用户请求 nonce。
-  - 返回后端生成的 nonce 与过期时间。
+钱包与链配置：
 
-### `/api/orders/verify`
+- 定义本地 `anvil` 链
+- `chainId = 31337`
+- 配置 RainbowKit / wagmi
 
-- [`src/app/api/orders/verify/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/verify/route.ts)
-  - 业务签名验签的核心后端入口。
-  - 承担：
-    - session 校验
-    - order payload 校验
-    - signature 格式校验
-    - chainId 校验
-    - signer recovery
-    - recovered signer 与 session 地址比对
-    - order.maker 与 session 地址比对
-    - deadline 校验
-    - nonce 消费
+### [`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts)
 
-### nonce store
+SIWE + NextAuth 的核心认证配置。
 
-- [`src/lib/order-nonce-store.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/order-nonce-store.ts)
-  - 当前用 `globalThis + Map` 做内存级 nonce store。
-  - 提供：
-    - `createOrderNonce(address)`
-    - `consumeOrderNonce({ address, nonce })`
+### [`src/lib/contracts.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/contracts.ts)
 
-## 5. SIWE 和 EIP-712 的区别
+前端唯一的合约导出入口。
 
-这两者不是同一个东西。
+它从：
 
-### SIWE 是登录认证
+- [`src/generated/contracts.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/generated/contracts.ts)
 
-- 解决的问题：证明“这个钱包地址由当前用户控制”。
-- 本项目中的实现：
-  - 钱包签 SIWE login message
-  - 后端在 [`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts) 里调用 `siwe.verify(...)`
-  - 验证成功后建立 NextAuth session
+导入 ABI 和地址，再统一导出：
 
-结果：
+- `contracts`
+- `deploymentMeta`
 
-- 产生的是 Web 登录态，即 session。
+### [`src/lib/eip712/domain.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/domain.ts)
 
-### EIP-712 是业务授权
+定义真实 `SignedOrderBook` 的 EIP-712 domain：
 
-- 解决的问题：证明“当前登录用户同意某一个具体业务动作”。
-- 本项目中的实现：
-  - 当前业务对象是 `order`
-  - 前端构造 typed data
-  - 钱包签 `Order`
-  - 后端 recover signer 并做业务校验
+- name
+- version
+- chainId
+- verifyingContract
 
-结果：
+### [`src/lib/eip712/order.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/order.ts)
 
-- 产生的是可验证的业务授权，而不是登录态。
+定义 `SignedOrderBook.Order` 的：
 
-### 在本项目中的具体区别
+- Zod schema
+- typed data `types`
+- 构造方法
+- typed data 格式转换方法
 
-- SIWE 签的是登录消息。
-- EIP-712 签的是结构化业务数据 `order`。
-- SIWE 成功后产生 session。
-- EIP-712 成功后产生可验证的业务授权。
-- 两者都不是链上交易。
-- 两者都不消耗 gas。
+### [`src/lib/eip712/nonce.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/nonce.ts)
 
-## 6. nonce 防重放机制
+业务 nonce 内存存储。当前只适合 demo。
 
-当前项目实现了一套明确的业务 nonce 机制。
+### [`src/lib/eip712.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712.ts)
 
-### 当前实现规则
+旧 mock order 路线的 typed data 定义。当前真实首页流程不再使用，但仓库仍保留。
 
-1. 前端不自己生成 nonce。
-2. 前端在签名前先请求 `/api/orders/nonce`。
-3. 后端基于当前 `sessionAddress` 生成 nonce。
-4. nonce 有过期时间。
-5. 前端把 nonce 放进 EIP-712 order。
-6. 后端验签成功后消费 nonce。
-7. 同一个 order + signature 不能重复提交。
+## generated
 
-### 代码实现
+### [`src/generated/contracts.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/generated/contracts.ts)
 
-- 创建 nonce：
-  - [`src/lib/order-nonce-store.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/order-nonce-store.ts)
-  - `createOrderNonce(address)`
+前端实际使用的 ABI + 地址导出文件。
 
-- 消费 nonce：
-  - [`src/lib/order-nonce-store.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/order-nonce-store.ts)
-  - `consumeOrderNonce({ address, nonce })`
+### [`src/generated/deployment.meta.json`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/generated/deployment.meta.json)
 
-- TTL：
-  - `NONCE_TTL_MS = 10 * 60 * 1000`
+前端实际使用的部署元数据。
 
-### 当前存储方式的限制
+注意：仓库里还存在：
 
-当前 demo 使用的是：
+- `../generated/*`
+- `../foundry/generated/*`
 
-```ts
-globalThis.orderNonceStore ?? new Map<string, NonceRecord>();
+但当前前端运行时实际读的是 `src/generated/*`。
+
+---
+
+## 合约说明
+
+合约都在：
+
+- [`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/src/siwe-eip712-demo`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/src/siwe-eip712-demo)
+
+## 1. DemoERC20
+
+文件：
+
+- [`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/src/siwe-eip712-demo/DemoERC20.sol`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/src/siwe-eip712-demo/DemoERC20.sol)
+
+作用：
+
+- 测试代币
+- 用来演示余额、`approve`、`transferFrom`
+
+当前实现特点：
+
+- 部署时给部署者 mint `1_000_000 ether`
+- owner 可以继续 `mint()`
+
+它在本项目里承担的是“真实业务对象”的角色，而不是占位符。
+
+## 2. TokenFaucet
+
+文件：
+
+- [`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/src/siwe-eip712-demo/TokenFaucet.sol`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/src/siwe-eip712-demo/TokenFaucet.sol)
+
+作用：
+
+- 给测试用户领取 `DemoERC20`
+
+当前实现特点：
+
+- `claimAmount` 固定
+- 有 `cooldown`
+- 使用 `lastClaimedAt` 限制重复领取
+- `canClaim(address)` 可以供前端读取
+
+为什么需要它：
+
+- 没有 token，后续 `approve` 和 `executeOrder` 就没有实际效果
+
+## 3. SignedOrderBook
+
+文件：
+
+- [`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/src/siwe-eip712-demo/SignedOrderBook.sol`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/src/siwe-eip712-demo/SignedOrderBook.sol)
+
+这是整个业务签名核心合约。
+
+### Order struct
+
+结构是：
+
+```solidity
+struct Order {
+    address maker;
+    address token;
+    address recipient;
+    uint256 amount;
+    uint256 deadline;
+    bytes32 nonce;
+}
 ```
 
-这意味着它只适合本地开发和单进程 demo，不适合生产环境。
+语义上表示：
 
-原因：
+- `maker`：谁授权这笔业务
+- `token`：操作哪个 ERC20
+- `recipient`：token 最终转给谁
+- `amount`：数量
+- `deadline`：何时过期
+- `nonce`：防重放
 
-- Serverless 场景下，实例可能随时销毁。
-- 进程重启后内存状态会丢失。
-- 多实例部署时，不同实例之间不会共享这份 `Map`。
+### ORDER_TYPEHASH
 
-生产环境建议改成：
+`ORDER_TYPEHASH` 是 EIP-712 结构签名的类型哈希：
 
-- Redis
-- 数据库表
-- 其他持久化 KV 存储
+```solidity
+keccak256(
+  "Order(address maker,address token,address recipient,uint256 amount,uint256 deadline,bytes32 nonce)"
+)
+```
 
-## 7. 本地运行步骤
+它让合约明确知道：
 
-以下步骤基于当前仓库的真实实现。
+- 这份签名对应的结构到底长什么样
 
-### 1. 安装依赖
+### hashOrder
+
+`hashOrder(order)` 做的事是：
+
+1. 先对 `Order` 按 EIP-712 规则编码
+2. 再结合 domain 做 `_hashTypedDataV4`
+3. 得到最终 digest
+
+这个 digest 才是签名恢复真正使用的内容。
+
+### recoverSigner
+
+`recoverSigner(order, signature)`：
+
+1. 先 `hashOrder(order)`
+2. 再 `ECDSA.recover(digest, signature)`
+3. 恢复出 signer 地址
+
+这和后端做的 `recoverTypedDataAddress()` 在逻辑上是同一类事情，只是一个在链下，一个在链上。
+
+### usedNonces
+
+`mapping(bytes32 => bool) public usedNonces;`
+
+它负责链上防重放：
+
+- nonce 没用过，才允许执行
+- 一旦执行成功，就标记为已使用
+
+### executeOrder
+
+`executeOrder(order, signature)` 是最终入口。
+
+它当前执行顺序是：
+
+1. 校验 `block.timestamp <= order.deadline`
+2. 校验 `!usedNonces[order.nonce]`
+3. 校验 `maker` / `token` / `recipient` 非零地址
+4. 校验 `amount > 0`
+5. `recoverSigner(order, signature)`
+6. 校验 `signer == maker`
+7. 把 nonce 标记成已使用
+8. 调 `IERC20(order.token).transferFrom(order.maker, order.recipient, order.amount)`
+9. 发出 `OrderExecuted`
+
+### deadline 校验
+
+它保证：
+
+- 过期签名不能无限期重放
+
+### signer == maker 校验
+
+它保证：
+
+- 订单里写的 maker，必须真的是签名人本人
+
+### transferFrom
+
+执行成功的本质动作是：
+
+- 从 maker 扣 token
+- 转给 recipient
+
+### OrderExecuted event
+
+成功后会发出：
+
+- `maker`
+- `recipient`
+- `token`
+- `amount`
+- `nonce`
+
+这让链上执行结果可追踪。
+
+### 为什么执行前必须先 approve DemoERC20 给 SignedOrderBook
+
+因为 `SignedOrderBook` 自己并不持有 maker 的 token。
+
+它只能通过：
+
+- `DemoERC20.transferFrom(maker, recipient, amount)`
+
+来代扣。
+
+而 ERC20 的规则要求：
+
+- `transferFrom` 前必须有 allowance
+
+所以用户必须先执行：
+
+- `DemoERC20.approve(SignedOrderBook, amount)`
+
+否则即使签名正确，链上执行也会失败。
+
+---
+
+## 生成文件与部署链路
+
+这是当前项目一个很重要的工程点。
+
+## Foundry 合约部署
+
+部署脚本：
+
+- [`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/script/siwe-eip712-demo/DeployDemo.s.sol`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/script/siwe-eip712-demo/DeployDemo.s.sol)
+
+它会部署：
+
+- `DemoERC20`
+- `TokenFaucet`
+- `SignedOrderBook`
+
+并写出部署元数据。
+
+## 一键部署脚本
+
+脚本：
+
+- [`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/tools/deploy-and-export.sh`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/tools/deploy-and-export.sh)
+
+当前脚本会：
+
+1. 设置 `PRIVATE_KEY`
+2. 设置 `NETWORK_NAME=localhost`
+3. 删除旧的 `generated` 和 `../generated`
+4. `forge build`
+5. `forge script ... --broadcast`
+6. `npm run export:deployment`
+
+## 生成前端可用 ABI / 地址文件
+
+相关脚本：
+
+- [`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/tools/export-foundry-deployment.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/tools/export-foundry-deployment.ts)
+- [`/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/tools/exportDeploymentArtifacts.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/tools/exportDeploymentArtifacts.ts)
+
+真实导出目标是：
+
+- `../siwe-eip712-demo/src/generated/deployment.meta.json`
+- `../siwe-eip712-demo/src/generated/contracts.ts`
+
+也就是说，**前端实际使用的 generated 文件，是 Foundry 导出后写进当前 Next.js 项目的 `src/generated/*`**。
+
+---
+
+## 本地运行说明
+
+这一节基于当前仓库里的真实脚本和结构整理。
+
+## 1. 安装前端依赖
+
+在当前项目根目录：
 
 ```bash
 npm install
 ```
 
-### 2. 配置 `.env.local`
+## 2. 安装 Foundry 侧依赖
 
-当前代码实际依赖以下环境变量：
+在 Foundry 目录：
+
+```bash
+cd ../foundry
+npm install
+```
+
+如果你的环境还没有 Foundry / `anvil` / `forge`，需要先按 Foundry 官方方式安装。
+
+## 3. 启动本地链
+
+开一个终端，运行：
+
+```bash
+anvil
+```
+
+默认本地 RPC 应是：
+
+```text
+http://127.0.0.1:8545
+```
+
+当前前端钱包配置预期链是：
+
+- `31337`
+
+## 4. 编译和部署合约
+
+在 `../foundry` 目录，你可以走两种方式。
+
+### 方式 A：一键脚本
+
+```bash
+npm run deploy:local
+```
+
+根据当前 `../foundry/package.json`，这会执行：
+
+```bash
+bash tools/deploy-and-export.sh
+```
+
+### 方式 B：手动执行
+
+```bash
+export PRIVATE_KEY=你的私钥
+export NETWORK_NAME=localhost
+forge build
+forge script script/siwe-eip712-demo/DeployDemo.s.sol:DeployDemo --rpc-url http://127.0.0.1:8545 --broadcast
+npm run export:deployment
+```
+
+如果你只是照着当前仓库的本地开发脚本跑，`tools/deploy-and-export.sh` 已经内置了本地测试私钥和 `NETWORK_NAME=localhost`。
+
+## 5. 准备前端环境变量
+
+在当前 Next.js 项目根目录创建 `.env.local`，至少补齐代码里实际读取到的变量。
+
+示例：
 
 ```bash
 NEXTAUTH_URL=http://localhost:3000
-NEXTAUTH_SECRET=your-secret
-NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your-walletconnect-project-id
+NEXTAUTH_SECRET=replace-with-a-random-secret
+NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=replace-with-your-project-id
 ```
 
-变量用途：
+说明：
 
-- `NEXTAUTH_URL`
-  - 用于 SIWE 验证时校验 domain。
-  - 在 [`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts) 中使用。
+- `NEXTAUTH_URL` 和 `NEXTAUTH_SECRET` 是 SIWE + NextAuth 必需项
+- `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` 当前在 `src/lib/wallet.ts` 里被强制读取
+- 如果你只使用 MetaMask 扩展，有时也许还能工作，但按当前代码，建议明确配置
 
-- `NEXTAUTH_SECRET`
-  - NextAuth secret。
-  - 在 [`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts) 中使用。
+## 6. 启动 Next.js
 
-- `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`
-  - RainbowKit / WalletConnect 所需 projectId。
-  - 在 [`src/lib/wallet.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/wallet.ts) 中使用。
-
-### 3. 启动开发服务器
+回到当前项目根目录：
 
 ```bash
 npm run dev
 ```
 
-### 4. 打开首页
+## 7. 浏览器打开首页
 
 ```text
 http://localhost:3000
 ```
 
-注意：
+## 8. 连接钱包并切到本地链
 
-- 当前项目没有单独的 `/sign` 页面。
-- 业务签名表单已经直接渲染在首页 [`src/app/page.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/page.tsx) 中。
-- 因此“打开 `/sign`”这一点在当前仓库中未实现。
+在钱包里确认：
 
-### 5. 连接钱包
+- RPC：`http://127.0.0.1:8545`
+- Chain ID：`31337`
 
-- 点击页面中的 `ConnectButton`
-- 选择钱包并连接
+如果页面显示 Wrong Network，先切链。
 
-### 6. 完成 SIWE 登录
+## 9. 领取 Faucet
 
-- 通过 RainbowKit + NextAuth 串起的 SIWE 登录流程完成登录
-- 登录成功后，在 `SIWE Session Portal` 区域能看到：
-  - `Session status`
-  - `Authenticated address`
-  - `Auth state`
+你可以先访问：
 
-### 7. 填写 order 表单并点击 `Sign Order`
+- [`/test`](http://localhost:3000/test)
 
-- 默认字段已填入 demo 数据：
-  - `token`
-  - `amount`
-  - `price`
+这里能看到：
 
-点击 `Sign Order` 后，前端会自动：
+- 当前链状态
+- DemoERC20 信息
+- Faucet 状态
 
-1. 请求 `/api/orders/nonce`
-2. 构造 order
-3. 发起 EIP-712 typed data 签名
-4. 提交 `/api/orders/verify`
+点击 `Claim Token`，领取 `DemoERC20`。
 
-### 8. 查看结果
+## 10. 完成 SIWE 登录
 
-页面会展示：
+回到首页，完成钱包连接后，进行 SIWE 登录，建立 session。
 
-- `Signature`
-- `Backend Verify Result`
+## 11. 签署 EIP-712 Order
 
-## 8. 可测试的异常场景
+在首页 `SignedOrderBook Verify and Execute` 区域：
 
-以下测试项均基于当前代码可验证的逻辑整理。
+1. 填 `recipient`
+2. 填 `amount`
+3. 填 `deadline`
+4. 点击签名并让后端验证
 
-### 1. 未登录直接点击 `Sign Order`
+## 12. Approve
 
-- 预期结果：
-  - 前端报错：`You must connect wallet and complete SIWE login first.`
-- 验证层：
-  - 前端 `canSign` 保护
-  - `useOrderSigner.ts`
+后端验签通过后：
 
-### 2. 未登录直接请求 `/api/orders/nonce`
+1. 点击 `Approve Token`
+2. 给 `SignedOrderBook` allowance
 
-- 预期结果：
-  - 返回 `401`
-  - `UNAUTHORIZED`
-- 验证层：
-  - 后端 session 校验
+## 13. ExecuteOrder
 
-### 3. 未登录直接请求 `/api/orders/verify`
+allowance 足够后：
 
-- 预期结果：
-  - 返回 `401`
-  - `Session is missing or expired.`
-- 验证层：
-  - 后端 session 校验
+1. 点击执行按钮
+2. 前端调用 `SignedOrderBook.executeOrder(order, signature)`
+3. 页面展示 tx hash、receipt status、nonce 使用状态
 
-### 4. 登录后切换钱包地址
+---
 
-- 预期结果：
-  - 前端 `useSiweSessionGuard` 自动 `signOut()`
-- 验证层：
-  - session 与当前连接钱包地址绑定
+## 环境变量说明
 
-### 5. 登录后切换链
+下面只列代码中**实际读取到**的变量。
 
-- 预期结果：
-  - 前端 `useSiweSessionGuard` 自动 `signOut()`
-- 验证层：
-  - session 与登录时钱包上下文绑定
+## Next.js 前端 / API
 
-### 6. 修改 `order.maker` 为其他地址
+### `NEXTAUTH_URL`
 
-- 预期结果：
-  - `/api/orders/verify` 返回 `403`
-  - `ADDRESS_MISMATCH`
-- 验证层：
-  - `order.maker` 与 `sessionAddress` 比对
+读取位置：
 
-说明：
-
-- 当前默认 UI 不允许直接修改 `maker`，因为 `maker` 在 `buildOrder(...)` 中固定取当前连接地址。
-- 如需测试，需要通过前端调试或直接构造请求 payload。
-
-### 7. 修改 signature
-
-- 预期结果：
-  - 可能返回 `ADDRESS_MISMATCH`
-  - 或直接无法恢复为合法 signer
-- 验证层：
-  - signer recovery
-  - recovered signer 与 session 地址比对
-
-### 8. 使用过期 deadline
-
-- 预期结果：
-  - 返回 `400`
-  - `ORDER_EXPIRED`
-- 验证层：
-  - 业务时间有效期校验
-
-说明：
-
-- 当前 UI 中 `deadline` 由 `buildOrder(...)` 自动生成为“现在 + 10 分钟”。
-- 如需测试，需要手动改请求体或调试代码。
-
-### 9. 重复提交同一个 order + signature
-
-- 预期结果：
-  - 第一次成功
-  - 第二次失败，返回 nonce 相关错误
-- 验证层：
-  - nonce 消费逻辑
-  - 防重放保护
-
-### 10. nonce 不存在
-
-- 预期结果：
-  - 返回 `NONCE_NOT_FOUND`
-- 验证层：
-  - 后端 nonce 存在性校验
-
-### 11. nonce 已被消费
-
-- 预期结果：
-  - 当前实现通常返回 `NONCE_NOT_FOUND`
-  - 因为 `consumeOrderNonce(...)` 成功后会 `store.delete(nonce)`
-- 验证层：
-  - 防重放
-
-补充说明：
-
-- `NONCE_ALREADY_USED` 这个错误码在 store 中定义了，但由于成功消费后立即删除 nonce，实际“重复提交同一个已成功消费的 nonce”更常落到 `NONCE_NOT_FOUND`。
-
-### 12. nonce 过期
-
-- 预期结果：
-  - 返回 `NONCE_EXPIRED`
-- 验证层：
-  - nonce TTL 校验
-
-### 13. session 失效
-
-- 预期结果：
-  - `/api/orders/nonce` 或 `/api/orders/verify` 返回 `401`
-- 验证层：
-  - NextAuth session 校验
-
-## 9. 核心代码逻辑说明
-
-这里不复制整个文件，只解释关键逻辑。
-
-### 9.1 NextAuth CredentialsProvider 如何验证 SIWE
-
-位置：[`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts)
-
-核心过程：
-
-1. 读取 `credentials.message` 和 `credentials.signature`
-2. `new SiweMessage(credentials.message)`
-3. 从 `NEXTAUTH_URL` 取 domain
-4. 调 `getCsrfToken({ req: { headers: req.headers } })`
-5. 执行：
-
-```ts
-await siwe.verify({
-  signature: credentials.signature,
-  domain: new URL(nextAuthUrl).host,
-  nonce: csrfToken,
-});
-```
-
-6. 验证通过后返回地址作为 user：
-
-```ts
-return {
-  id: siwe.address,
-  name: siwe.address,
-};
-```
-
-要点：
-
-- 这里的 SIWE nonce 使用的是 NextAuth CSRF token。
-- session 中最终持久化的是钱包地址。
-
-### 9.2 RainbowKitSiweNextAuthProvider 如何把钱包连接和 SIWE 登录串起来
-
-位置：[`src/components/providers.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/providers.tsx)
-
-当前 provider 组合顺序：
-
-1. `WagmiProvider`
-2. `QueryClientProvider`
-3. `SessionProvider`
-4. `RainbowKitSiweNextAuthProvider`
-5. `RainbowKitProvider`
+- [`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts)
 
 作用：
 
-- `ConnectButton` 来自 RainbowKit
-- `RainbowKitSiweNextAuthProvider` 负责让 RainbowKit 与 NextAuth 的 SIWE 登录流程配合工作
-- `SessionProvider` 让前端能通过 `useSession()` 读取登录态
+- SIWE 校验时取 domain
 
-### 9.3 useSiweSessionGuard 如何处理 account change / chain change 后自动 signOut
+### `NEXTAUTH_SECRET`
 
-位置：[`src/hooks/useSiweSessionGuard.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useSiweSessionGuard.ts)
+读取位置：
 
-逻辑分两部分：
-
-1. 地址和连接状态校验
-
-```ts
-if (!isConnected || !address) {
-  signOut();
-}
-
-if (normalizedSessionAddress !== normalizedWalletAddress) {
-  signOut();
-}
-```
-
-2. 链变化校验
-
-```ts
-if (
-  previousChainIdRef.current !== undefined &&
-  previousChainIdRef.current !== chainId
-) {
-  signOut();
-}
-```
+- [`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts)
 
 作用：
 
-- 防止“登录后换地址仍继续使用原 session”
-- 防止“登录后切链仍继续使用原 session”
+- NextAuth secret
 
-### 9.4 EIP-712 domain / types / message 如何构造
+### `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`
 
-位置：[`src/lib/eip712.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712.ts)
+读取位置：
 
-核心内容：
+- [`src/lib/wallet.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/wallet.ts)
 
-- `orderTypes`
-- `getOrderDomain(chainId)`
-- `toOrderTypedData(order)`
+作用：
 
-当前 `Order` 类型为：
+- RainbowKit / WalletConnect 配置
 
-```ts
-[
-  { name: "maker", type: "address" },
-  { name: "token", type: "address" },
-  { name: "amount", type: "uint256" },
-  { name: "price", type: "uint256" },
-  { name: "deadline", type: "uint256" },
-  { name: "nonce", type: "bytes32" },
-];
-```
+## Foundry 部署
 
-当前 demo 的 `verifyingContract` 是零地址：
+### `PRIVATE_KEY`
 
-```ts
-"0x0000000000000000000000000000000000000000";
-```
+读取位置：
 
-这说明它是一个演示型 typed data domain，不代表当前项目存在真实链上合约校验流程。
+- [`../foundry/script/siwe-eip712-demo/DeployDemo.s.sol`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/script/siwe-eip712-demo/DeployDemo.s.sol)
 
-### 9.5 useOrderSigner 如何请求 nonce、发起 typed data 签名、提交后端验证
+作用：
 
-位置：[`src/hooks/useOrderSigner.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useOrderSigner.ts)
+- 部署账户私钥
 
-关键步骤都在 `signAndVerify(values)`：
+### `NETWORK_NAME`
 
-1. 检查 `chainId`
-2. 检查 `canSign`
-3. `requestOrderNonce()`
-4. `buildOrder(values, nonce)`
-5. `orderInputSchema.safeParse(order)`
-6. `toOrderTypedData(parsedOrder.data)`
-7. `signTypedDataAsync(...)`
-8. 提交 `/api/orders/verify`
-9. 保存后端返回结果
+读取位置：
 
-`canSign` 的计算也很关键：
+- [`../foundry/script/siwe-eip712-demo/DeployDemo.s.sol`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/script/siwe-eip712-demo/DeployDemo.s.sol)
 
-```ts
-const canSign =
-  isConnected &&
-  Boolean(address) &&
-  status === "authenticated" &&
-  sessionAddress?.toLowerCase() === address?.toLowerCase();
-```
+作用：
 
-这保证了：
+- 写入部署元数据的网络名
 
-- 钱包已连接
-- session 已认证
-- session 地址和当前连接钱包地址一致
+如果未来项目新增别的环境变量，需要以代码中实际读取的位置为准，不要只看旧文档。
 
-### 9.6 /api/orders/verify 如何 recover signer 并校验 sessionAddress、order.maker、deadline、nonce
+---
 
-位置：[`src/app/api/orders/verify/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/verify/route.ts)
+## 前端交互说明
 
-执行顺序：
+这一节按当前 UI 解释“按钮到底在干什么”。
 
-1. `getServerSession(authOptions)`
-2. 校验 `session.user.name`
-3. `orderInputSchema.safeParse(body.order)`
-4. 校验 `body.signature`
-5. 校验 `body.chainId`
-6. `recoverTypedDataAddress(...)`
-7. 比对 `recoveredAddress` 与 `sessionAddress`
-8. 比对 `order.maker` 与 `sessionAddress`
-9. 校验 `deadline`
-10. `consumeOrderNonce(...)`
-11. 返回 `verified: true`
+### ConnectButton 做什么
 
-这个 route 是整个项目安全边界的核心实现。
+位置：
 
-### 9.7 nonce store 如何 create nonce 和 consume nonce
+- [`src/components/siwe-status.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/siwe-status.tsx)
 
-位置：[`src/lib/order-nonce-store.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-contracthook/src/lib/order-nonce-store.ts)
+作用：
 
-#### createOrderNonce(address)
+- 连接钱包
+- 读取当前地址
+- 读取当前链
 
-- 生成 32 字节随机数：
+它不建立 session。
 
-```ts
-randomBytes(32).toString("hex");
-```
+### 当前钱包地址如何显示
 
-- 保存内容：
-  - address
-  - nonce
-  - expiresAt
-  - used
+前端通过 wagmi 的 `useAccount()` 读取地址，并在 `SiweStatus` 和 `/test` 页中展示。
 
-#### consumeOrderNonce({ address, nonce })
+### 当前 chainId 和 expected chainId 如何判断
 
-依次检查：
+当前 chainId 来自：
 
-1. nonce 是否存在
-2. 是否已使用
-3. 是否过期
-4. nonce 所属地址是否和当前地址一致
+- wagmi `useChainId()`
 
-通过后：
+expected chainId 来自：
 
-- `record.used = true`
-- `store.delete(params.nonce)`
+- `deploymentMeta.chainId`
 
-## 10. 项目作用总结
+如果两者不一致，就会出现 Wrong Network 状态。
 
-这个 demo 的实际意义在于：它不是普通的连接钱包 demo，而是一个完整展示 Web3 登录认证与业务签名授权边界的示例。
+### Wrong Network 时如何处理
 
-它清楚地展示了：
+在 `/test` 页面中，有明确的 wrong network banner 和切链按钮。
 
-- 钱包连接态和 Web 登录态应该分离。
-- `SIWE` 负责认证身份。
-- `EIP-712` 负责授权具体业务动作。
-- 后端必须进行：
-  - signer recovery
-  - session 对比
-  - maker 对比
-  - deadline 校验
-  - nonce 防重放校验
+在首页业务签名区中，会显示：
 
-因此，这个项目非常适合作为以下场景的基础模板：
+- “Wrong network. Switch your wallet to chain 31337 before signing.”
 
-- 订单签名
-- 白名单授权
-- profile update 授权
-- permit 类业务
-- 任何“先登录，再对具体业务 payload 做离线签名授权”的 Web3 应用
+而且正常签名与执行路径不会被当作 ready 状态。
 
-## 当前未实现 / 后续可补充项
+### Claim Faucet 做什么
 
-以下内容是根据当前仓库真实状态整理，不做虚构：
+`Claim Token` 会调用 `TokenFaucet.claim()`，把 `DemoERC20` 发到当前钱包。
 
-- 当前没有独立的 `/sign` 页面，签名 UI 直接在首页。
-- 当前 nonce store 是内存 `Map`，不适合生产部署。
-- 当前没有数据库。
-- 当前没有持久化审计日志。
-- 当前没有真实链上合约交互。
-- 当前 `verifyingContract` 使用的是零地址，仅用于 demo。
-- 当前没有单元测试或集成测试文件。
+### SIWE 登录按钮做什么
+
+SIWE 登录按钮会触发钱包签登录消息，后端验签后建立 session。
+
+### Sign Order 做什么
+
+在首页真实业务卡片里，签名动作会：
+
+1. 请求业务 nonce
+2. 构造真实 `SignedOrderBook.Order`
+3. 调用钱包 `signTypedData`
+4. 提交给后端 `verify-order`
+
+### Verify Result 显示什么
+
+会展示：
+
+- session address
+- recovered signer
+- order 内容
+- expected token
+- expected chainId
+
+也就是“后端独立验签后到底认不认这份业务授权”。
+
+### Approve 做什么
+
+`Approve Token` 会执行：
+
+- `DemoERC20.approve(SignedOrderBook, amount)`
+
+### Execute 做什么
+
+`Execute Verified Order` 会执行：
+
+- `SignedOrderBook.executeOrder(order, signature)`
+
+这是链上交易，会产生真实状态变化。
+
+---
+
+## SIWE 和 EIP-712 对比表
+
+| 对比项 | SIWE | EIP-712 |
+| --- | --- | --- |
+| 目的 | 登录认证 | 业务授权 |
+| 解决的问题 | 你是谁 | 你授权了什么 |
+| 签名内容 | 登录消息 | 结构化业务数据 |
+| 本项目签名对象 | SIWE message | `SignedOrderBook.Order` |
+| 验证位置 | NextAuth / 后端 | 后端 + 合约 |
+| 是否建立 session | 是 | 否 |
+| 是否直接产生链上状态变化 | 否 | 否，只有后续执行交易才会 |
+| 常见用途 | 登录、账户绑定 | 订单、permit、白名单、profile update |
+| 本项目对应模块 | `src/lib/auth.ts` | `src/lib/eip712/*`、`src/app/api/eip712/*`、`SignedOrderBook.sol` |
+
+---
+
+## 常见问题与排错
+
+### 1. 钱包连接后为什么不等于登录
+
+因为连接钱包只说明前端读到了地址，不代表后端已经建立 session。
+
+你仍然需要完成 SIWE 登录，后端才会把这个地址当成当前认证用户。
+
+### 2. 为什么显示 Wrong Network
+
+因为当前钱包链 ID 和 `deploymentMeta.chainId` 不一致。
+
+当前项目预期链是：
+
+- `31337`
+
+### 3. 为什么读取不到合约数据
+
+常见原因：
+
+- 钱包没连上
+- 钱包不在 `31337`
+- 本地链没启动
+- 合约没重新部署
+- `src/generated/contracts.ts` 仍然是旧地址
+
+### 4. 为什么 executeOrder 失败
+
+常见原因：
+
+- 没有 approve
+- allowance 不足
+- token 余额不足
+- signature 无效
+- nonce 已使用
+- deadline 已过期
+- 当前链不对
+
+### 5. 为什么必须 approve
+
+因为 `SignedOrderBook` 执行的是 `transferFrom`，而不是持币用户自己直接 `transfer`。
+
+没有 allowance，合约无权代扣 token。
+
+### 6. 为什么出现 nonce already used
+
+因为同一个 nonce 只能成功执行一次。
+
+这正是 replay protection 生效的表现。
+
+### 7. 为什么出现 order expired
+
+因为当前时间已经晚于 `order.deadline`。
+
+这个项目里后端和合约都对过期订单有校验。
+
+### 8. 为什么恢复地址和 maker 不一致
+
+说明签名人和订单里声明的 maker 不是同一个地址。
+
+可能原因：
+
+- 签名前后切换了钱包
+- 手动篡改了 order
+- 篡改了 signature
+- domain 配置不一致
+
+### 9. 为什么本地链重启后合约地址可能变化
+
+因为重新部署后，地址通常会变化。当前前端地址来自生成文件，不是写死在业务代码里。
+
+### 10. `generated/contracts.ts` 是怎么来的
+
+它来自 Foundry 导出脚本：
+
+- 先部署合约
+- 再读取 Foundry `out` 目录中的 ABI
+- 再写入 `src/generated/contracts.ts`
+
+### 11. 修改合约后为什么要重新部署和 export deployment
+
+因为前端依赖的两类信息都可能变：
+
+- 合约地址
+- ABI
+
+只改 Solidity 源码但不重新部署、不重新导出，前端就可能继续用旧 ABI 或旧地址。
+
+### 12. 为什么 session 和 wallet address 会突然不一致
+
+当前项目有 session guard。
+
+如果你切换账号、切换链、或者断开钱包，前端会主动 `signOut()`，避免“钱包已经变了，但 session 还留着旧地址”的风险。
+
+---
+
+## 旧 mock 路线与当前真实路线
+
+仓库中目前同时保留两套 EIP-712 代码：
+
+### 当前主路线
+
+- `src/lib/eip712/domain.ts`
+- `src/lib/eip712/order.ts`
+- `src/lib/eip712/nonce.ts`
+- `src/app/api/eip712/order-nonce/route.ts`
+- `src/app/api/eip712/verify-order/route.ts`
+- `src/hooks/order/useOrderSigner.ts`
+- `SignedOrderBook.sol`
+
+这是当前首页真实使用的路线。
+
+### 旧 mock 路线
+
+- `src/lib/eip712.ts`
+- `src/lib/order-nonce-store.ts`
+- `src/app/api/orders/nonce/route.ts`
+- `src/app/api/orders/verify/route.ts`
+- `src/hooks/useOrderSigner.ts`
+
+这套路线当前主要用于保留历史演化痕迹与对比，不是主流程。
+
+如果你以后继续维护，建议始终以“`src/lib/eip712/*` + `/api/eip712/*` + `SignedOrderBook` 合约”作为主线理解项目。
+
+---
+
+## 如何讲解这个 Demo
+
+如果你要给新手讲，推荐按下面顺序：
+
+### 1. 先讲钱包连接
+
+先让对方明白：
+
+- 前端怎么知道当前地址
+- 前端怎么知道当前链
+- 连接钱包不等于登录
+
+### 2. 再讲 SIWE 登录
+
+解释：
+
+- 为什么要签登录消息
+- 为什么后端要建立 session
+- 为什么 session 是 Web 应用需要的状态
+
+### 3. 再讲 session 和 wallet address 的区别
+
+强调：
+
+- 钱包连接态来自 wagmi
+- 登录态来自 NextAuth
+- 这两者可以暂时一致，也可能失配
+- 所以需要 session guard
+
+### 4. 再讲 EIP-712 typed data
+
+解释：
+
+- 为什么不用一段普通字符串
+- 为什么要有 `domain`
+- 为什么要绑定 `chainId` 和 `verifyingContract`
+
+### 5. 再讲后端验签
+
+解释：
+
+- 后端不能信前端说“这是我签的”
+- 后端必须自己 recover signer
+- 后端还要把 signer、maker、sessionAddress 对起来
+
+### 6. 再讲 approve
+
+解释：
+
+- 业务签名不等于链上转账
+- 真正执行前，合约还需要 ERC20 allowance
+
+### 7. 最后讲 SignedOrderBook 链上执行
+
+解释：
+
+- 合约如何重新验签
+- 如何检查 nonce / deadline
+- 如何 `transferFrom`
+- 为什么执行成功后 nonce 不能再复用
+
+按这个顺序讲，新手通常能比较清楚地区分：
+
+- 身份认证
+- 业务授权
+- 链上执行
+
+而这正是这个 Demo 最有价值的地方。
+
+---
+
+## 结语
+
+这个项目最值得保留的不是某一张 UI，而是它清楚地展示了 Web3 应用里三层边界：
+
+- 钱包连接态
+- Web 登录态
+- 业务授权与链上执行
+
+当你以后把它扩展到：
+
+- 订单系统
+- permit-like 授权
+- 白名单操作
+- profile update
+- relayer 执行
+
+都可以继续沿用这个分层思路。

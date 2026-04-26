@@ -1,0 +1,317 @@
+它解决了什么
+
+如果只有连接钱包，其实不够。
+
+因为“钱包已连接”只能说明浏览器里有个地址，并不能说明：
+
+这个地址已经完成登录
+后端认这个地址
+这个地址真的授权了某个具体业务动作
+这次做的功能，就是把下面这条链路补完整：
+
+用户先通过 SIWE 拿到登录态
+然后用户填写一个订单
+钱包对这个订单做 EIP-712 签名
+后端恢复 signer
+后端检查 signer、session、maker 是不是同一个地址
+再检查 deadline、nonce、token 合不合法
+最后告诉前端：这份签名业务上是否有效
+所以它本质上解决的是：
+
+“登录身份”和“业务授权”分层
+后端不盲信前端传过来的签名
+避免把别人的签名、过期签名、重复使用的签名当成有效授权
+核心链路是什么
+
+这次新功能的核心链路是这条：
+
+connect wallet
+→ SIWE login
+→ get session
+→ request order nonce
+→ build SignedOrderBook.Order
+→ sign typed data
+→ submit order + signature to backend
+→ backend recover signer
+→ compare signer === maker
+→ compare session address === maker
+→ check deadline
+→ check nonce
+→ check token
+→ return verify result
+我按新手能懂的方式拆开讲。
+
+第 1 步：连接钱包
+
+用户先点 Connect Wallet。
+
+这一步只是让前端知道：
+
+当前钱包地址是谁
+当前链 ID 是多少
+它还不是登录。
+
+也就是说：
+
+连接钱包 ≠ 登录成功
+连接钱包只是“浏览器里现在能看到这个地址”
+第 2 步：做 SIWE 登录
+
+然后用户做 SIWE login。
+
+这一步的意思是：
+
+钱包对一条登录消息签名
+后端验证这个签名
+验证成功以后，创建一个 session
+这样后端就知道：
+
+当前这个浏览器会话，对应的钱包地址是谁
+所以这一步的产物不是交易，也不是业务授权，而是：
+
+session address
+你可以把它理解成：
+“Web2 里的登录态，只不过用户名换成了钱包地址”。
+
+第 3 步：进入业务签名页面
+
+用户进入 /order 页面。
+
+这个页面不是做链上执行的，它只做两件事：
+
+让用户填写业务参数
+让用户签名，然后交给后端验签
+当前表单里让用户填的是：
+
+recipient
+amount
+另外几个字段不是用户手填，而是系统自动补的：
+
+maker：当前钱包地址
+token：当前 DemoERC20 地址
+deadline：过期时间
+nonce：后端发的随机值
+最后会拼成一个 SignedOrderBook.Order。
+
+第 4 步：先向后端请求 nonce
+
+签名前，前端会先请求：
+
+POST /api/eip712/order-nonce
+为什么要先拿 nonce？
+
+因为签名如果没有 nonce，就可能被重复利用。
+
+比如你签过一次：
+
+攻击者把这份签名保存下来
+以后可以重复提交
+nonce 的作用就是：
+“这份签名只能用一次”。
+
+所以这里的流程是：
+
+前端不自己生成 nonce
+后端基于当前 session address 发一个 bytes32 nonce
+这个 nonce 有过期时间
+后端稍后会检查它是不是被重复使用
+第 5 步：前端构造 SignedOrderBook.Order
+
+拿到 nonce 之后，前端构造订单对象。
+
+结构大概是：
+
+{
+  maker,
+  token,
+  recipient,
+  amount,
+  deadline,
+  nonce
+}
+这里最关键的是：
+
+maker 是谁发起这笔业务
+recipient 是收款人
+amount 是数量
+deadline 是这份授权多久有效
+nonce 是防重放
+token 是这笔业务对应哪个 token
+这一步还没签名，只是在组织“要签什么内容”。
+
+第 6 步：钱包对 typed data 签名
+
+接着前端调用 signTypedData。
+
+这不是普通字符串签名，而是 EIP-712 结构化签名。
+
+它会带上：
+
+domain
+types
+message
+其中 domain 非常重要，里面有：
+
+name: "SignedOrderBook"
+version: "1"
+chainId
+verifyingContract
+这代表：
+“这份签名只属于这个合约、这个链、这个业务结构”。
+
+也就是说，用户签的不是一句模糊的话，而是：
+“我同意这个具体 order”。
+
+这一步的产物是：
+
+signature
+第 7 步：前端把 order + signature 发给后端
+
+签完以后，前端会请求：
+
+POST /api/eip712/verify-order
+提交内容包括：
+
+chainId
+order
+signature
+这一步开始，验证权交给后端。
+
+前端不会自己说“验签成功了”，而是让后端独立判断。
+
+第 8 步：后端 recover signer
+
+后端拿到这些数据后，会做一件最关键的事：
+
+用同样的 domain、types、message、signature
+反推出到底是谁签的
+这个过程叫：
+
+recover signer
+这样后端就能得到：
+
+recoveredAddress
+这一步非常关键，因为后端不能信前端说：
+“这是我签的”。
+
+后端必须自己算。
+
+第 9 步：后端检查 signer === maker
+
+恢复出 signer 之后，后端先检查：
+
+recovered signer === order.maker
+意思是：
+这份签名，必须真的是这个 order 里写的 maker 自己签的。
+
+如果不一致，就拒绝。
+
+这防止一种情况：
+
+订单里写的是 A
+实际签名的人是 B
+这是不允许的。
+
+第 10 步：后端检查 session address === maker
+
+然后后端再检查：
+
+session address === order.maker
+这一步是把“登录身份”和“业务签名人”绑起来。
+
+意思是：
+
+你不仅要签了这个 order
+你还必须是当前登录的那个人
+否则会出现一种危险情况：
+
+当前登录的是 A
+但提交了一份 B 的签名
+如果后端不检查 session，就可能混淆身份边界
+所以这里做的是第二层绑定。
+
+第 11 步：后端检查 deadline
+
+后端再检查：
+
+这个 order 有没有过期
+如果 deadline 已经过了，就直接拒绝。
+
+因为一份业务授权不应该永久有效。
+
+这能防止：
+
+很久以前签的一份单子
+现在又被拿出来重新用
+第 12 步：后端检查 nonce
+
+后端还会检查：
+
+nonce 是否存在
+nonce 是否过期
+nonce 是否已经被消费
+nonce 是否属于当前 session address
+如果这些不满足，也会拒绝。
+
+这样就能防止：
+
+重放签名
+拿别人的 nonce 来签
+使用旧 nonce
+第 13 步：后端检查 token 是否在允许范围内
+
+当前这次实现里，后端还会检查：
+
+order.token 是否是预期的 DemoERC20 地址
+意思是：
+你不能拿一个任意 token 地址，伪装成系统支持的业务对象。
+
+这一步是业务白名单校验。
+
+第 14 步：后端返回验签结果
+
+如果前面都通过了，后端就返回：
+
+verified: true
+sessionAddress
+recoveredAddress
+order
+前端页面会把这些都展示出来。
+
+所以用户最终能看到：
+
+自己签了什么
+签名结果是什么
+后端恢复出来的 signer 是谁
+后端是否认为这份签名有效
+为什么这一步暂时不做链上执行
+
+你这次要求的是 Phase 3，只做：
+
+前端签名
+后端验签
+暂时不做：
+
+executeOrder(order, signature)
+这么做是对的，因为这样你能先把这两件事讲清楚：
+
+业务签名是怎么构造出来的
+后端验签到底在验什么
+如果现在把链上执行也混进来，初学者很容易分不清：
+
+哪部分是登录
+哪部分是签名
+哪部分是合约执行
+哪部分是 allowance 问题
+哪部分是链上 revert
+所以现在这个阶段的重点就是：
+
+“签”
+“验”
+先讲清楚，再进下一阶段。
+
+一句话总结
+
+这次做的功能，本质上是在演示：
+
+“一个已经通过 SIWE 登录的用户，如何对一个具体业务对象做 EIP-712 签名，并由后端独立验证这份签名确实来自当前登录用户，而且这份授权还没有过期、没有重放、没有越权。”
