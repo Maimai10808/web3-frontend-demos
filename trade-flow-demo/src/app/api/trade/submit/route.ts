@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
 import { createOrderFromOperation } from "@/src/lib/trade/order-store";
+import { mockVerifySignature } from "@/src/lib/trade/mock-signer";
 import type { SubmitTradeRequest } from "@/src/lib/trade/types";
-
-function isValidSignature(signature: unknown) {
-  return typeof signature === "string" && signature.startsWith("mock_sig_");
-}
 
 export async function POST(request: Request) {
   try {
@@ -19,7 +16,13 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!isValidSignature(body.signature)) {
+    const signatureCheck = await mockVerifySignature({
+      account: body.payload.operation.account,
+      payload: body.payload,
+      signature: body.signature,
+    });
+
+    if (!signatureCheck.valid) {
       return NextResponse.json(
         {
           message: "Invalid mock signature.",

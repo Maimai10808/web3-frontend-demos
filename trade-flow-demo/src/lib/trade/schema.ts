@@ -65,7 +65,7 @@ export const tradeDataSchema = z.object({
   amount: z.string().min(1),
   price: z.string().min(1),
   slippageBps: z.number().int().min(0).max(1000),
-  expiresAt: z.number().int().positive(),
+  deadline: z.number().int().positive(),
 });
 
 export const operationSchema = z.object({
@@ -74,7 +74,8 @@ export const operationSchema = z.object({
     (value) => typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value),
     "Invalid account address",
   ),
-  tradeData: z.string().min(1),
+  clientOrderId: z.string().min(1),
+  tradeData: tradeDataSchema,
   nonce: z.string().min(1),
   createdAt: z.number().int().positive(),
 });
@@ -95,6 +96,7 @@ export const orderStatusSchema = z.enum(ORDER_STATUSES);
 
 export const orderSchema = z.object({
   orderId: z.string().min(1),
+  clientOrderId: z.string().min(1),
   account: z.string().min(1),
   market: z.string().min(1),
   side: z.enum(TRADE_SIDES),
@@ -102,6 +104,7 @@ export const orderSchema = z.object({
   price: z.string().min(1),
   filledAmount: z.string().min(1),
   status: orderStatusSchema,
+  signature: z.string().min(1),
   createdAt: z.number().int().positive(),
   updatedAt: z.number().int().positive(),
   expiresAt: z.number().int().positive(),
