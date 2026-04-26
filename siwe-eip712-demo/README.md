@@ -1,8 +1,1035 @@
 # SIWE + EIP-712 + SignedOrderBook Demo
 
 <p align="center">
-  <img src="./1.png" alt="Home" width="50%" />
+  <img src="./1.png" alt="Home" width="30%" />
+  <img src="./2.png" alt="Home" width="30%" />
+  <img src="./3.png" alt="Home" width="30%" />
 </p>
+<p align="center">
+  <img src="./4.png" alt="Home" width="50%" />
+  <img src="./5.png" alt="Home" width="50%" />
+</p>
+
+**Language / 语言**
+
+- [English](#english)
+- [中文](#中文)
+
+---
+
+<a id="english"></a>
+
+# English
+
+## Project Positioning
+
+This project is a **minimal but complete** Web3 identity + business-signing demo. It is not just a wallet-connect example. It separates and connects three different layers:
+
+1. `Connect Wallet`
+   The frontend learns which wallet is connected and which chain is active.
+2. `SIWE Login`
+   The wallet signs a login message so the backend can create a Web session.
+3. `EIP-712 Business Signature + Onchain Execute`
+   After login, the user signs a real `SignedOrderBook.Order`, the backend verifies it, then the app approves `DemoERC20` and executes the order onchain.
+
+The core problem this demo solves is:
+
+- Wallet connection is not the same thing as login.
+- Login is not the same thing as authorizing a concrete business action.
+- For business signatures, the backend and the contract must verify independently instead of trusting the frontend.
+
+The project is organized around three main steps:
+
+### Step 01
+
+**Connect**
+
+Connect a wallet, read the active address, and confirm the expected local deployment chain.
+
+### Step 02
+
+**Authenticate with SIWE**
+
+Create a web session that proves the connected wallet address is the current authenticated user.
+
+### Step 03
+
+**Verify and Execute**
+
+Build a real `SignedOrderBook` order, sign it with EIP-712 typed data, verify it on the backend, approve `DemoERC20`, and execute it onchain.
+
+---
+
+## What This Demo Solves
+
+In one sentence:
+
+> `SIWE` answers “who are you”, `EIP-712` answers “what exact action did you authorize”, and `SignedOrderBook` answers “can that authorization be accepted and executed onchain”.
+
+The three demo contracts have different responsibilities:
+
+- `DemoERC20`
+  A test token used for balances, `approve`, and `transferFrom`.
+- `TokenFaucet`
+  A faucet that gives users `DemoERC20`, so later business signatures can produce a real onchain effect.
+- `SignedOrderBook`
+  The core business-signing contract. It accepts `Order + signature`, recovers the signer, checks `deadline` and `nonce`, then performs `transferFrom`.
+
+This makes the repo a clean teaching demo for four separate layers:
+
+- wallet connection
+- web session
+- business authorization
+- onchain execution
+
+---
+
+## Core Concepts
+
+### Wallet Connection
+
+Wallet connection means the frontend can read:
+
+- the active address
+- the active chain ID
+- whether the wallet is connected
+
+It only proves:
+
+- the browser currently has access to that wallet address
+
+It does **not** prove:
+
+- the backend recognizes that address as the logged-in user
+- the user has approved a concrete business action
+
+So:
+
+> Connect Wallet ≠ Login
+
+### SIWE
+
+`SIWE` means `Sign-In with Ethereum`.
+
+Its job is not business authorization. Its job is login.
+
+The user signs a login message, the backend verifies it, and a session is created. After that, the backend knows which wallet address belongs to the current browser session.
+
+### Session
+
+A session is the backend-managed login state.
+
+In this project, `NextAuth` stores the authenticated address in:
+
+- `session.user.name`
+
+That lets backend APIs identify the current logged-in address without repeating the whole login challenge each time.
+
+### EIP-712 Typed Data
+
+`EIP-712` is a standard for **structured signatures**.
+
+Instead of signing an arbitrary string, the wallet signs:
+
+- `domain`
+- `types`
+- `message`
+
+In this project, the signed business object is `SignedOrderBook.Order`:
+
+- `maker`
+- `token`
+- `recipient`
+- `amount`
+- `deadline`
+- `nonce`
+
+### Off-chain Signature
+
+An off-chain signature means:
+
+- the wallet signs data
+- no transaction is sent
+- no gas is spent
+
+This project has two off-chain signatures:
+
+1. SIWE login signature
+2. EIP-712 business signature
+
+### On-chain Verification
+
+On-chain verification means the contract validates the signature by itself.
+
+Here, `SignedOrderBook.executeOrder(order, signature)` does contract-side verification:
+
+- recomputes `hashOrder`
+- recovers the signer
+- checks `deadline`
+- checks `usedNonces`
+- checks `signer == maker`
+
+Only then does it perform the token transfer.
+
+### Nonce
+
+A `nonce` is a one-time value used for replay protection.
+
+Without a nonce, the same signature could be submitted again later.
+
+This demo uses nonce in two places:
+
+- the backend issues a business nonce before signing
+- the contract tracks `usedNonces` to prevent reuse onchain
+
+### Deadline
+
+`deadline` is the expiration time of the authorization.
+
+It ensures that an old signature cannot remain valid forever.
+
+### ERC20 approve
+
+`approve` means the token owner authorizes another address or contract to spend tokens on their behalf.
+
+In this project, the user must approve:
+
+- `DemoERC20` → `SignedOrderBook`
+
+### transferFrom
+
+`transferFrom` means a third party spends tokens on behalf of the owner, subject to allowance.
+
+The final onchain effect in this demo is:
+
+- `SignedOrderBook` calls `DemoERC20.transferFrom(order.maker, order.recipient, order.amount)`
+
+### Chain ID / verifyingContract / domain separator
+
+An EIP-712 signature is bound not only to the message, but also to the `domain`.
+
+In this project, the real domain includes:
+
+- `name: "SignedOrderBook"`
+- `version: "1"`
+- `chainId`
+- `verifyingContract`
+
+This prevents:
+
+- cross-chain replay
+- cross-contract replay
+
+### Why SIWE and EIP-712 are different
+
+`SIWE` answers:
+
+> who are you
+
+`EIP-712` answers:
+
+> what exact action did you authorize
+
+They have different outputs:
+
+- `SIWE` creates a session
+- `EIP-712` creates a verifiable business authorization
+
+Neither one is a transaction by itself.
+
+---
+
+## Full Business Flow
+
+```text
+connect wallet
+→ check chain
+→ request SIWE nonce
+→ sign SIWE message
+→ backend verify SIWE
+→ create session
+→ build SignedOrderBook order
+→ request business nonce
+→ sign EIP-712 typed data
+→ backend verify typed data
+→ approve DemoERC20
+→ executeOrder on SignedOrderBook
+→ contract recover signer
+→ contract check nonce / deadline
+→ contract transferFrom
+→ emit OrderExecuted
+```
+
+### Step 01: Connect
+
+Relevant files:
+
+- [`src/app/page.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/page.tsx)
+- [`src/components/siwe-status.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/siwe-status.tsx)
+- [`src/components/providers.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/providers.tsx)
+- [`src/lib/wallet.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/wallet.ts)
+
+What happens:
+
+1. The user clicks `ConnectButton`.
+2. wagmi / RainbowKit reads the current address.
+3. The frontend reads the current `chainId`.
+4. The app compares it with `deploymentMeta.chainId`.
+
+Expected chain source:
+
+- [`src/lib/contracts.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/contracts.ts)
+- [`src/generated/deployment.meta.json`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/generated/deployment.meta.json)
+
+Current local expectation:
+
+- `chainId = 31337`
+- RPC = `http://127.0.0.1:8545`
+
+### Step 02: Authenticate with SIWE
+
+Relevant files:
+
+- [`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts)
+- [`src/app/api/auth/[...nextauth]/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/auth/[...nextauth]/route.ts)
+- [`src/components/providers.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/providers.tsx)
+- [`src/hooks/useSiweStatusViewModel.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useSiweStatusViewModel.ts)
+- [`src/hooks/useSiweSessionGuard.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useSiweSessionGuard.ts)
+
+What happens:
+
+1. The user triggers SIWE login after connecting a wallet.
+2. The wallet signs a SIWE login message.
+3. NextAuth `CredentialsProvider.authorize()` receives `message` and `signature`.
+4. The backend verifies the message using `SiweMessage.verify()`.
+5. NextAuth creates a JWT session.
+6. The wallet address is stored in `session.user.name`.
+
+In this project, SIWE nonce is not exposed as a separate business route. It is tied to NextAuth `csrfToken`.
+
+### Step 03: Verify and Execute
+
+#### 3.1 Build the business order
+
+Relevant files:
+
+- [`src/components/order-signer.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/order-signer.tsx)
+- [`src/hooks/order/useOrderSigner.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/order/useOrderSigner.ts)
+- [`src/lib/eip712/order.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/order.ts)
+- [`src/lib/eip712/domain.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/domain.ts)
+
+User input:
+
+- `recipient`
+- `amount`
+- `deadlineSeconds`
+
+System-filled fields:
+
+- `maker`
+- `token`
+- `deadline`
+- `nonce`
+
+#### 3.2 Request the business nonce
+
+Relevant files:
+
+- [`src/app/api/eip712/order-nonce/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/eip712/order-nonce/route.ts)
+- [`src/lib/eip712/nonce.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/nonce.ts)
+
+What happens:
+
+1. The frontend calls `POST /api/eip712/order-nonce`.
+2. The backend reads the current session address.
+3. It generates a `bytes32` nonce.
+4. It stores that nonce in an in-memory `Map`.
+5. It returns the nonce and expiration time.
+
+Important:
+
+- this nonce store is demo-only
+- it is suitable for local development
+- it is not suitable for serverless, multi-instance, or restart-heavy production systems
+
+#### 3.3 Sign EIP-712 typed data
+
+Relevant files:
+
+- [`src/hooks/order/useOrderSigner.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/order/useOrderSigner.ts)
+- [`src/lib/eip712/order.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/order.ts)
+- [`src/lib/eip712/domain.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/domain.ts)
+
+The frontend calls `signTypedDataAsync()` with:
+
+- `domain`
+- `types`
+- `primaryType: "Order"`
+- `message`
+
+The output is:
+
+- `signature`
+
+This still does not spend gas.
+
+#### 3.4 Backend verification
+
+Relevant file:
+
+- [`src/app/api/eip712/verify-order/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/eip712/verify-order/route.ts)
+
+The backend checks:
+
+1. session exists
+2. `chainId` matches expected `31337`
+3. `token` is in the allowlist
+4. recovered signer equals `order.maker`
+5. `session.user.name` equals `order.maker`
+6. `deadline` is not expired
+7. nonce exists, belongs to that address, is not expired, and is not already used
+
+#### 3.5 Approve DemoERC20
+
+Relevant files:
+
+- [`src/hooks/contract/useDemoToken.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/contract/useDemoToken.ts)
+- [`src/components/order-signer.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/components/order-signer.tsx)
+
+The frontend:
+
+1. reads `allowance(owner, signedOrderBook)`
+2. checks if allowance is enough
+3. lets the user click `Approve Token`
+4. calls `DemoERC20.approve(SignedOrderBook, amount)`
+
+#### 3.6 Onchain executeOrder
+
+Relevant files:
+
+- [`src/hooks/contract/useSignedOrderBook.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/contract/useSignedOrderBook.ts)
+- [`../foundry/src/siwe-eip712-demo/SignedOrderBook.sol`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/src/siwe-eip712-demo/SignedOrderBook.sol)
+
+What happens:
+
+1. The frontend calls `executeOrder(order, signature)`.
+2. The contract recovers the signer again.
+3. The contract checks:
+   - `deadline`
+   - `usedNonces`
+   - `maker`
+   - `token`
+   - `recipient`
+   - `amount`
+4. The contract marks the nonce as used.
+5. The contract calls `IERC20(order.token).transferFrom(...)`.
+6. The contract emits `OrderExecuted`.
+
+---
+
+## Module Map
+
+### Pages and UI
+
+#### [`src/app/page.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/page.tsx)
+
+The main teaching page. It organizes the full three-step flow:
+
+- Step 01 Connect
+- Step 02 Authenticate with SIWE
+- Step 03 Verify and Execute
+
+It renders:
+
+- `SiweStatus`
+- `OrderSigner`
+- `SignatureFlowExplainer`
+
+#### [`src/app/order/page.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/order/page.tsx)
+
+A standalone order page that currently reuses the same main components:
+
+- `SiweStatus`
+- `OrderSigner`
+
+#### [`src/app/test/page.tsx`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/test/page.tsx)
+
+A local deployment dashboard focused on:
+
+- wallet / chain status
+- wrong network handling
+- DemoERC20 reads
+- Faucet claim
+
+It is not the full signature-execution teaching page.
+
+### API
+
+#### [`src/app/api/auth/[...nextauth]/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/auth/[...nextauth]/route.ts)
+
+NextAuth route entry point.
+
+#### [`src/app/api/eip712/order-nonce/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/eip712/order-nonce/route.ts)
+
+The real business nonce route for `SignedOrderBook.Order`.
+
+#### [`src/app/api/eip712/verify-order/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/eip712/verify-order/route.ts)
+
+The real backend verification route for `SignedOrderBook.Order`.
+
+#### Legacy mock routes
+
+- [`src/app/api/orders/nonce/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/nonce/route.ts)
+- [`src/app/api/orders/verify/route.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/app/api/orders/verify/route.ts)
+
+These remain in the repo as the older mock-order flow, but they are not the main path used by the current homepage.
+
+### Hooks
+
+Authentication:
+
+- [`src/hooks/useSiweStatusViewModel.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useSiweStatusViewModel.ts)
+- [`src/hooks/useSiweSessionGuard.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useSiweSessionGuard.ts)
+
+Contracts:
+
+- [`src/hooks/contract/useDemoToken.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/contract/useDemoToken.ts)
+- [`src/hooks/contract/useTokenFaucet.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/contract/useTokenFaucet.ts)
+- [`src/hooks/contract/useSignedOrderBook.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/contract/useSignedOrderBook.ts)
+- [`src/hooks/contract/useContracts.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/contract/useContracts.ts)
+
+Business signing:
+
+- [`src/hooks/order/useOrderSigner.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/order/useOrderSigner.ts)
+
+Legacy mock hook:
+
+- [`src/hooks/useOrderSigner.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/hooks/useOrderSigner.ts)
+
+### lib
+
+- [`src/lib/wallet.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/wallet.ts): wagmi / RainbowKit chain config
+- [`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts): SIWE + NextAuth config
+- [`src/lib/contracts.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/contracts.ts): frontend contract entry point
+- [`src/lib/eip712/domain.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/domain.ts): real domain config
+- [`src/lib/eip712/order.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/order.ts): real order schema / types
+- [`src/lib/eip712/nonce.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712/nonce.ts): business nonce store
+- [`src/lib/eip712.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/eip712.ts): legacy mock typed-data module
+
+### Generated files
+
+- [`src/generated/contracts.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/generated/contracts.ts): ABI + address exports actually used by the frontend
+- [`src/generated/deployment.meta.json`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/generated/deployment.meta.json): deployment metadata actually used by the frontend
+
+The repo also contains:
+
+- `../generated/*`
+- `../foundry/generated/*`
+
+But the running frontend currently uses `src/generated/*`.
+
+---
+
+## Contract Overview
+
+Contracts live in:
+
+- [`../foundry/src/siwe-eip712-demo`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/src/siwe-eip712-demo)
+
+### 1. DemoERC20
+
+File:
+
+- [`../foundry/src/siwe-eip712-demo/DemoERC20.sol`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/src/siwe-eip712-demo/DemoERC20.sol)
+
+Role:
+
+- test token
+- balance source
+- `approve` / `transferFrom` target
+
+Current behavior:
+
+- mints `1_000_000 ether` to the deployer on deployment
+- owner can call `mint()`
+
+### 2. TokenFaucet
+
+File:
+
+- [`../foundry/src/siwe-eip712-demo/TokenFaucet.sol`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/src/siwe-eip712-demo/TokenFaucet.sol)
+
+Role:
+
+- gives users `DemoERC20`
+
+Current behavior:
+
+- fixed `claimAmount`
+- `cooldown`
+- `lastClaimedAt`
+- `canClaim(address)`
+
+### 3. SignedOrderBook
+
+File:
+
+- [`../foundry/src/siwe-eip712-demo/SignedOrderBook.sol`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/src/siwe-eip712-demo/SignedOrderBook.sol)
+
+This is the core business-signing contract.
+
+#### Order struct
+
+```solidity
+struct Order {
+    address maker;
+    address token;
+    address recipient;
+    uint256 amount;
+    uint256 deadline;
+    bytes32 nonce;
+}
+```
+
+#### ORDER_TYPEHASH
+
+Defines the exact EIP-712 order shape:
+
+```solidity
+keccak256(
+  "Order(address maker,address token,address recipient,uint256 amount,uint256 deadline,bytes32 nonce)"
+)
+```
+
+#### hashOrder
+
+Creates the final EIP-712 digest for the order using `_hashTypedDataV4`.
+
+#### recoverSigner
+
+Recovers the signer from `order + signature`.
+
+#### usedNonces
+
+Tracks whether a nonce has already been consumed onchain.
+
+#### executeOrder
+
+Execution flow:
+
+1. check `deadline`
+2. check `usedNonces`
+3. validate non-zero addresses and `amount > 0`
+4. recover signer
+5. check `signer == maker`
+6. mark nonce as used
+7. call `transferFrom`
+8. emit `OrderExecuted`
+
+#### Why approve is required before executeOrder
+
+Because `SignedOrderBook` is not the token owner. It must rely on:
+
+- `DemoERC20.transferFrom(maker, recipient, amount)`
+
+That only works if the maker first approves `SignedOrderBook`.
+
+---
+
+## Deployment and Generated Artifacts
+
+### Foundry deployment script
+
+- [`../foundry/script/siwe-eip712-demo/DeployDemo.s.sol`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/script/siwe-eip712-demo/DeployDemo.s.sol)
+
+It deploys:
+
+- `DemoERC20`
+- `TokenFaucet`
+- `SignedOrderBook`
+
+### One-command local deployment
+
+- [`../foundry/tools/deploy-and-export.sh`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/tools/deploy-and-export.sh)
+
+It currently:
+
+1. sets `PRIVATE_KEY`
+2. sets `NETWORK_NAME=localhost`
+3. removes old generated directories
+4. runs `forge build`
+5. runs the deployment script with `--broadcast`
+6. runs `npm run export:deployment`
+
+### Exporting frontend-ready ABI and addresses
+
+Relevant scripts:
+
+- [`../foundry/tools/export-foundry-deployment.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/tools/export-foundry-deployment.ts)
+- [`../foundry/tools/exportDeploymentArtifacts.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/tools/exportDeploymentArtifacts.ts)
+
+The actual frontend target is:
+
+- `src/generated/deployment.meta.json`
+- `src/generated/contracts.ts`
+
+So the frontend uses exported artifacts written directly into the Next.js app.
+
+---
+
+## Local Development
+
+### 1. Install frontend dependencies
+
+```bash
+npm install
+```
+
+### 2. Install Foundry-side dependencies
+
+```bash
+cd ../foundry
+npm install
+```
+
+If Foundry tools such as `anvil` and `forge` are not installed yet, install them first.
+
+### 3. Start the local chain
+
+```bash
+anvil
+```
+
+Expected local RPC:
+
+```text
+http://127.0.0.1:8545
+```
+
+Expected chain:
+
+- `31337`
+
+### 4. Build and deploy contracts
+
+In `../foundry`, either run:
+
+```bash
+npm run deploy:local
+```
+
+or run manually:
+
+```bash
+export PRIVATE_KEY=your_private_key
+export NETWORK_NAME=localhost
+forge build
+forge script script/siwe-eip712-demo/DeployDemo.s.sol:DeployDemo --rpc-url http://127.0.0.1:8545 --broadcast
+npm run export:deployment
+```
+
+### 5. Configure frontend environment variables
+
+Create `.env.local` in the current Next.js project root:
+
+```bash
+NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_SECRET=replace-with-a-random-secret
+NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=replace-with-your-project-id
+```
+
+### 6. Start Next.js
+
+```bash
+npm run dev
+```
+
+### 7. Open the app
+
+```text
+http://localhost:3000
+```
+
+### 8. Connect wallet and switch to the local chain
+
+Make sure the wallet uses:
+
+- RPC: `http://127.0.0.1:8545`
+- Chain ID: `31337`
+
+### 9. Claim faucet tokens
+
+Open:
+
+- [http://localhost:3000/test](http://localhost:3000/test)
+
+Then click `Claim Token`.
+
+### 10. Complete SIWE login
+
+Go back to the homepage and finish SIWE login.
+
+### 11. Sign an EIP-712 order
+
+On the homepage:
+
+1. fill `recipient`
+2. fill `amount`
+3. fill `deadline`
+4. sign and let the backend verify
+
+### 12. Approve
+
+Click `Approve Token`.
+
+### 13. Execute
+
+Click the execute button. The app will call:
+
+- `SignedOrderBook.executeOrder(order, signature)`
+
+---
+
+## Environment Variables
+
+Only variables actually read by the current code are listed here.
+
+### Next.js app / API
+
+#### `NEXTAUTH_URL`
+
+Read in:
+
+- [`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts)
+
+#### `NEXTAUTH_SECRET`
+
+Read in:
+
+- [`src/lib/auth.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/auth.ts)
+
+#### `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`
+
+Read in:
+
+- [`src/lib/wallet.ts`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/siwe-eip712-demo/src/lib/wallet.ts)
+
+### Foundry deployment
+
+#### `PRIVATE_KEY`
+
+Read in:
+
+- [`../foundry/script/siwe-eip712-demo/DeployDemo.s.sol`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/script/siwe-eip712-demo/DeployDemo.s.sol)
+
+#### `NETWORK_NAME`
+
+Read in:
+
+- [`../foundry/script/siwe-eip712-demo/DeployDemo.s.sol`](/Volumes/DevDisk/Dev/projects/web3-frontend-demos/foundry/script/siwe-eip712-demo/DeployDemo.s.sol)
+
+---
+
+## Frontend Interaction Guide
+
+### What `ConnectButton` does
+
+It connects the wallet and exposes the current address and chain.
+
+It does not create a session.
+
+### How the current wallet address is shown
+
+The app reads it through wagmi `useAccount()` and displays it in `SiweStatus` and `/test`.
+
+### How current chain and expected chain are compared
+
+- current chain: wagmi `useChainId()`
+- expected chain: `deploymentMeta.chainId`
+
+### What happens on Wrong Network
+
+- `/test` shows an explicit wrong-network banner and switch-chain button
+- the homepage signing area shows a wrong-network warning
+- normal sign / execute flow is not treated as ready
+
+### What `Claim Faucet` does
+
+It calls `TokenFaucet.claim()` and sends `DemoERC20` to the current wallet.
+
+### What the SIWE login button does
+
+It triggers wallet-based login signing and creates a backend session after verification.
+
+### What `Sign Order` does
+
+On the homepage it:
+
+1. requests a business nonce
+2. builds a real `SignedOrderBook.Order`
+3. signs typed data
+4. sends it to the backend `verify-order` API
+
+### What `Verify Result` shows
+
+It shows:
+
+- session address
+- recovered signer
+- order content
+- expected token
+- expected chain ID
+
+### What `Approve` does
+
+It calls:
+
+- `DemoERC20.approve(SignedOrderBook, amount)`
+
+### What `Execute` does
+
+It calls:
+
+- `SignedOrderBook.executeOrder(order, signature)`
+
+This is the actual transaction that changes onchain state.
+
+---
+
+## SIWE vs EIP-712
+
+| Item                           | SIWE                   | EIP-712                                                           |
+| ------------------------------ | ---------------------- | ----------------------------------------------------------------- |
+| Goal                           | authentication         | business authorization                                            |
+| Core question                  | who are you            | what action did you authorize                                     |
+| Signed content                 | login message          | structured business data                                          |
+| Project object                 | SIWE message           | `SignedOrderBook.Order`                                           |
+| Verification location          | backend / NextAuth     | backend + contract                                                |
+| Creates a session              | yes                    | no                                                                |
+| Directly changes onchain state | no                     | no, only later execution does                                     |
+| Common usage                   | login, account binding | orders, permit, allowlists, profile update                        |
+| Project modules                | `src/lib/auth.ts`      | `src/lib/eip712/*`, `src/app/api/eip712/*`, `SignedOrderBook.sol` |
+
+---
+
+## FAQ / Troubleshooting
+
+### Why is wallet connection not the same as login?
+
+Because connection only tells the frontend which wallet is available. It does not create backend session state.
+
+### Why does the app show Wrong Network?
+
+Because the wallet chain ID does not match `deploymentMeta.chainId`, which is currently expected to be `31337`.
+
+### Why can’t the app read contract data?
+
+Common causes:
+
+- wallet not connected
+- wrong chain
+- local chain not running
+- contracts not deployed
+- `src/generated/contracts.ts` still points to old addresses
+
+### Why does `executeOrder` fail?
+
+Common causes:
+
+- no `approve`
+- insufficient allowance
+- insufficient balance
+- invalid signature
+- nonce already used
+- expired deadline
+- wrong chain
+
+### Why is `approve` required?
+
+Because `SignedOrderBook` relies on `transferFrom`, not a direct token transfer from the maker.
+
+### Why does it say `nonce already used`?
+
+Because replay protection is working as intended.
+
+### Why does it say `order expired`?
+
+Because current time is already later than `order.deadline`.
+
+### Why doesn’t the recovered signer match `maker`?
+
+Possible causes:
+
+- the wallet changed before or after signing
+- the order was modified
+- the signature was tampered with
+- the domain settings do not match
+
+### Why may contract addresses change after restarting the local chain?
+
+Because redeployment usually produces new addresses, and the frontend depends on exported deployment artifacts.
+
+### How is `generated/contracts.ts` created?
+
+It is generated from the Foundry deployment metadata and ABI export scripts.
+
+### Why must I redeploy and re-export after changing a contract?
+
+Because both the contract address and ABI may change, and the frontend depends on both.
+
+---
+
+## Legacy Mock Flow vs Current Real Flow
+
+The repo still contains two EIP-712 paths.
+
+### Current real path
+
+- `src/lib/eip712/domain.ts`
+- `src/lib/eip712/order.ts`
+- `src/lib/eip712/nonce.ts`
+- `src/app/api/eip712/order-nonce/route.ts`
+- `src/app/api/eip712/verify-order/route.ts`
+- `src/hooks/order/useOrderSigner.ts`
+- `SignedOrderBook.sol`
+
+This is the current homepage flow.
+
+### Legacy mock path
+
+- `src/lib/eip712.ts`
+- `src/lib/order-nonce-store.ts`
+- `src/app/api/orders/nonce/route.ts`
+- `src/app/api/orders/verify/route.ts`
+- `src/hooks/useOrderSigner.ts`
+
+These remain mainly for historical comparison.
+
+---
+
+## Recommended Teaching Order
+
+If you want to explain this demo to a beginner, use this order:
+
+1. wallet connection
+2. SIWE login
+3. the difference between session and wallet address
+4. EIP-712 typed data
+5. backend verification
+6. `approve`
+7. SignedOrderBook onchain execution
+
+That sequence makes it much easier to separate:
+
+- identity
+- authorization
+- execution
+
+---
+
+<a id="中文"></a>
+
+# 中文
 
 ## 项目定位
 
